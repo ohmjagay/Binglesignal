@@ -1,0 +1,33 @@
+name: Checks
+
+# Runs when code changes (not when the robot saves new feed files).
+on:
+  push:
+    paths:
+      - 'public/**/*.js'
+      - 'public/**/*.html'
+      - 'scripts/**'
+      - 'worker/**'
+      - 'supabase/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JavaScript has no syntax errors
+        run: |
+          for f in public/*.js scripts/*.mjs worker/src/*.js; do
+            [ -e "$f" ] || continue
+            echo "checking $f"
+            node --check "$f"
+          done
+      - name: Payments Worker tests
+        run: |
+          if [ -f worker/tests/worker.test.mjs ]; then node --test worker/tests/worker.test.mjs; else echo "no worker tests yet"; fi

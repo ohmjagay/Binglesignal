@@ -1,0 +1,40 @@
+name: Nightly database backup
+
+# Free Supabase projects have no automatic backups, so this makes one every night:
+# an ENCRYPTED copy of your users + app data, kept 14 days as a downloadable file on the run page.
+# Needs two secrets: SUPABASE_DB_URL (Supabase -> Connect -> "Session pooler" connection string, with your DB password filled in)
+#                    BACKUP_PASSPHRASE (a long random phrase you save in your password manager)
+
+on:
+  schedule:
+    - cron: '40 20 * * *'      # 02:10 IST
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Dump and encrypt
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$DB_URL" ] || [ -z "$PASS" ]; then echo "Add the SUPABASE_DB_URL and BACKUP_PASSPHRASE secrets first"; exit 1; fi
+          pg_dump "$DB_URL" --no-owner --no-privileges --schema=public --schema=auth -Fc -f backup.dump
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:PASS -in backup.dump -out "backup-$(date -u +%F).dump.enc"
+          rm backup.dump
+          ls -lh backup-*.enc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup-*.dump.enc
+          retention-days: 14

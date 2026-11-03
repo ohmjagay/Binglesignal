@@ -1,0 +1,52 @@
+name: Site health
+
+# Every 3 hours: is the site up, is the feed full and fresh, is the API alive?
+# Also pings Supabase (free projects pause after 7 idle days).
+# If anything fails you get an email from GitHub, and a Telegram message if you add the two secrets.
+# Secrets used (all optional): SUPABASE_URL, SUPABASE_ANON_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+on:
+  schedule:
+    - cron: '23 */3 * * *'
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SB_URL: ${{ secrets.SUPABASE_URL }}
+      SB_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    steps:
+      - name: Website answers
+        run: curl -fsS --retry 3 --max-time 20 https://binglesignal.com/ -o /dev/null
+
+      - name: Feed is full and fresh
+        run: |
+          curl -fsS --retry 3 --max-time 30 https://binglesignal.com/feed.json -o feed.json
+          python3 - <<'PY'
+          import json, sys, datetime as d
+          f = json.load(open('feed.json'))
+          age = (d.datetime.now(d.timezone.utc) - d.datetime.fromisoformat(f['gen'].replace('Z', '+00:00'))).total_seconds() / 3600
+          print(f"stories={len(f['items'])} age_hours={age:.1f}")
+          if len(f['items']) < 50 or age > 14:
+              sys.exit('FEED EMPTY OR STALE')
+          PY
+
+      - name: Payments API answers (skipped until the Worker is live)
+        run: curl -fsS --max-time 20 https://binglesignal.com/api/health || echo "API not live yet - fine"
+
+      - name: Keep Supabase awake
+        if: ${{ env.SB_URL != '' }}
+        run: |
+          curl -fsS --max-time 20 "$SB_URL/rest/v1/bs_profiles?select=id&limit=1" -H "apikey: $SB_KEY" -o /dev/null
+
+      - name: Tell me on Telegram if anything above failed
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -n "$TG_TOKEN" ] && curl -fsS "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d chat_id="$TG_CHAT" \
+            -d text="BingleSignal health check FAILED: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
