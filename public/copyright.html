@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Copyright Policy - BingleSignal</title>
+  <meta name="theme-color" content="#07111F">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/config.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap bar">
+      <a class="brand serif" href="/"><span>Bingle<em>Signal</em></span></a>
+      <a class="link" href="/">Back to the briefing</a>
+    </div>
+  </header>
+  <main class="legal">
+    <h1 class="serif">Copyright Policy</h1>
+    <p class="mu">Last updated: 3 November 2026</p>
+    <p>Headlines, summaries, images, videos and other material linked from BingleSignal may be owned by their respective publishers and creators. We aim to identify the source and link to the original material. BingleSignal does not claim ownership of third-party content.</p>
+    <h2>Report a concern</h2>
+    <p>If you believe material displayed by BingleSignal infringes your copyright, contact <span class="em">support@binglesignal.com</span> with the page or item URL, a description of the copyrighted work, and your contact details. Explain what you believe is infringing and why. If you are authorized to act for the rights holder, please say so.</p>
+    <p>We will review complete reports and take appropriate action. Where possible, we may ask for additional information before acting. You may also contact the publisher or hosting service linked on the item, which controls the original material.</p>
+    <h2>Questions</h2>
+    <p>For general questions, see our <a href="/contact">Contact page</a>.</p>
+  </main>
+  <footer>
+    <div class="wrap">&copy; <span class="yr"></span> BingleSignal. <a href="/terms">Terms</a> &middot; <a href="/refund">Refunds</a> &middot; <a href="/privacy">Privacy</a> &middot; <a href="/copyright">Copyright</a> &middot; <a href="/contact">Contact</a></div>
+  </footer>
+  <script>
+    const email = (window.BS || {}).email;
+    document.querySelectorAll('.em').forEach((node) => {
+      if (email) node.innerHTML = '<a href="mailto:' + email + '">' + email + '</a>';
+    });
+    document.querySelectorAll('.yr').forEach((node) => {
+      node.textContent = new Date().getFullYear();
+    });
+  </script>
+</body>
+</html>
