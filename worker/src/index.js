@@ -5,6 +5,7 @@
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
 //   POST /api/webhooks/global    international provider (Standard Webhooks format, e.g. Dodo Payments)
 // Secrets needed: see wrangler.example.toml
+import { handleEmailRequest, handleEmailSchedule } from './email-beta.js';
 
 const enc = new TextEncoder();
 const json = (o, status = 200) =>
@@ -187,6 +188,7 @@ export default {
       if (p === '/api/health') return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
         rails: { razorpay: !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && env.RAZORPAY_PLAN_LITE_MONTHLY && env.RAZORPAY_PLAN_PRO_MONTHLY),
                  global: !!(env.GLOBAL_LINK_LITE_MONTH && env.GLOBAL_LINK_PRO_MONTH) } });
+      if (p.startsWith('/api/email/')) return await handleEmailRequest(req, env);
       if (req.method !== 'POST') return json({ error: 'not found' }, 404);
       if (p === '/api/checkout') return await handleCheckout(req, env);
       if (p === '/api/cancel') return await handleCancel(req, env);
@@ -197,5 +199,8 @@ export default {
       console.error(e);
       return json({ error: 'server error' }, 500);   // provider will retry
     }
+  },
+  scheduled(controller, env, ctx) {
+    ctx.waitUntil(handleEmailSchedule(controller.cron, env));
   },
 };

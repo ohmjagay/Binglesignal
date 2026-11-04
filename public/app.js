@@ -146,7 +146,7 @@ function cardR(c){const i=c.i,n=i.k.filter(k=>P.sel.includes(k)).length,t=c.ex?'
  return`<article class="card item" data-id="${i.id}"><div class="ct"><span class="tag">${PL[i.p]||'News'}</span><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.x?`<p>${esc(short(i.x,200))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" class="${PR.lk.includes(i.id)?'on':''}">♥ Like</button><button data-a="save" class="${PR.sv.includes(i.id)?'on':''}">⚑ Save</button><button data-a="hide">✕ Less like this</button></span></div></article>`}
 function cardV(c){const i=c.i;return`<div class="vc" data-id="${i.id}" data-a="vp" role="button" tabindex="0"><div class="th"><img src="https://i.ytimg.com/vi/${encodeURIComponent(i.vid)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><span class="pb">▶</span></div><h4>${esc(i.t)}</h4><small>${esc(i.s)} · ${fmt(i.e||0)} views · ${ago(i.d*1000)}</small><div class="chips sm">${c.ex?'<span>Explore</span>':''}${chips(i)}</div></div>`}
 function shell(tab){let b=$('#home .brand')?.outerHTML||'<span class="brand serif">BingleSignal</span>';b=b.replace('id="g"','id="g2"').replace('url(#g)','url(#g2)');
- $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a></nav><div class="hdr-r"><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
+ $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a><a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a></nav><div class="hdr-r"><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
 function summary(n,total){return`<section class="sum"><div class="eyebrow">${TAB==='read'?'Read':'Watch'} · ranked for you</div><h1 class="serif">${P.name?esc(P.name)+', your':'Your'} ${TAB==='read'?'reading list':'video queue'}</h1><div class="chips sm">${P.geos.map(g=>`<span>${esc(cname(g))}</span>`).join('')}${P.sel.slice(0,8).map(id=>`<span>${esc(LBL[id])}</span>`).join('')}${P.sel.length>8?`<span>+${P.sel.length-8} more</span>`:''}</div><small>${n} ranked from ${total} candidates · feed built ${POOL.gen?ago(POOL.gen*1000):'just now'} · it learns from every like, hide, skip and watch</small></section>`}
 function empty(){return`<div class="card end">Your personal feed is being prepared. The first edition appears within a few minutes of the first automatic build - please check back shortly.</div>`}
 function renderRead(){
@@ -165,6 +165,53 @@ function more(){const L=list(),box=$('#rl'),s=$('#sent');if(!box||!s)return;cons
 function renderWatch(){
  const W=rank(POOL.items,BS.watchCap||30,true);
  $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
+async function emailApi(path,method='GET',body){
+ const access=await token();if(!access)throw new Error('Please sign in again.');
+ const response=await fetch(path,{method,headers:{authorization:'Bearer '+access,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ let result={};try{result=await response.json()}catch{}
+ if(!response.ok)throw new Error(result.error||'Email beta request failed ('+response.status+')');
+ return result
+}
+async function renderEmailBeta(){
+ const box=$('#am'),params=new URLSearchParams(location.hash.split('?')[1]||'');
+ const notice=params.get('email_connected')?'Mailbox connected. The beta sync reads mailbox metadata only.':params.get('email_error')?'Mailbox connection did not complete. Please try again.':'';
+ box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing preview</h1><p class="tag">Connect a read-only mailbox and test the report schedule. This beta uses fixture summaries only; it does not read email subjects or bodies or send them to an AI service.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Before you connect</h2><p>Google's <code>gmail.metadata</code> permission can access message headers and labels; Microsoft's <code>Mail.ReadBasic</code> permission can access basic fields such as subject and sender. This beta requests only Gmail message IDs and change history, or Outlook message IDs and received times. It does not fetch or store subjects, senders, bodies, or attachments. Google classifies this as a restricted scope and may require verification and a security assessment. Disconnect removes the saved token and sync state.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I understand and consent to read-only mailbox metadata access for this beta.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Send a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages creates a clearly labeled synthetic batch report. The scheduled report is created near the selected local time.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
+ const message=$('#email-message');
+ const load=async()=>{
+  const data=await emailApi('/api/email/settings');
+  $('#email-timezone').value=data.settings.timezone;
+  $('#email-time').value=data.settings.digest_time;
+  $('#email-connections').innerHTML=data.connections.length?data.connections.map(c=>`<div class="email-connection"><div><b>${esc(c.provider)}</b> · ${esc(c.provider_email)}<small>Last sync: ${c.last_sync_at?esc(new Date(c.last_sync_at).toLocaleString()):'pending'}${c.last_error?' · '+esc(c.last_error):''}</small></div><button class="link" data-email-action="disconnect" data-provider="${esc(c.provider)}">Disconnect</button></div>`).join(''):'<p>No mailboxes connected.</p>';
+  $('#email-reports').innerHTML=data.reports.length?data.reports.map(r=>`<article class="email-report"><div class="eyebrow">${esc(r.report.label||'SYNTHETIC EXAMPLE')} · ${esc(r.kind)}</div><h3>${esc(r.report.title||'Beta report')}</h3><p>${esc(r.report.summary||'')}</p><small>${r.email_count} new messages detected from metadata · ${esc(new Date(r.created_at).toLocaleString())} · email: ${esc(r.delivery_status)}</small></article>`).join(''):'<p>No reports yet. Use the synthetic test button to preview one.</p>';
+ };
+ try{await load()}catch(error){message.textContent=error.message}
+ box.onclick=async(event)=>{
+  const button=event.target.closest('[data-email-action]');if(!button)return;
+  const action=button.dataset.emailAction;button.disabled=true;message.textContent='';
+  try{
+   if(action==='connect'){
+    if(!$('#email-consent').checked)throw new Error('Confirm the beta consent before connecting.');
+    const result=await emailApi('/api/email/connect','POST',{provider:button.dataset.provider,consent:true});
+    location.assign(result.authorize_url);return
+   }
+   if(action==='disconnect'){
+    const result=await emailApi('/api/email/disconnect','POST',{provider:button.dataset.provider});
+    message.textContent=result.warning||'Mailbox disconnected.';
+   }else if(action==='preview'){
+    const result=await emailApi('/api/email/preview','POST',{});
+    message.textContent=result.notice
+   }
+   await load()
+  }catch(error){message.textContent=error.message}
+  finally{button.disabled=false}
+ };
+ $('#email-settings').onsubmit=async(event)=>{
+  event.preventDefault();const button=event.submitter;button.disabled=true;message.textContent='';
+  try{await emailApi('/api/email/settings','POST',{timezone:$('#email-timezone').value,digest_time:$('#email-time').value});message.textContent='Schedule saved.'}
+  catch(error){message.textContent=error.message}
+  finally{button.disabled=false}
+ }
+}
 // after feedback, re-rank only what the reader has not seen yet
 function reTail(){if(TAB!=='read')return;const keep=READ.slice(0,SHOWN),ids=new Set(keep.map(c=>c.i.id)),cl=new Set(keep.map(c=>c.i.c));
  READ=keep.concat(rank(POOL.items.filter(i=>!ids.has(i.id)&&!cl.has(i.c)),(BS.readCap||200)-keep.length,false))}
@@ -194,6 +241,8 @@ export async function route(){
  if(/^#\/(pricing|paused|account)(\/|$)/.test(location.hash))return;
  if(r==='ok'){await loadUser().catch(()=>{});await pull();location.hash='#/me/read';return}
  if(r)openAuth('Sign-in did not complete: '+r,'in');
+ if(/^#\/email(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to use the invited email beta.','in');return}
+  home.hidden=true;app.hidden=false;shell('email');$('#am').innerHTML='<div class="end">Loading email beta…</div>';await renderEmailBeta();scrollTo(0,0);return}
  const m=location.hash.match(/^#\/me(?:\/(read|watch))?/),home=$('#home'),app=$('#app');
  if(!m){home.hidden=false;app.hidden=true;return}
  if(!S){home.hidden=false;app.hidden=true;history.replaceState(null,'',location.pathname);openAuth('Sign in to open your personal briefing.','in');return}

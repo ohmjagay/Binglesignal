@@ -1,5 +1,5 @@
 # ======================================================================
-# Every value below goes into Cloudflare as a SECRET. Leave blank until you have it.
+# Sensitive values below go into Cloudflare as Secrets. EMAIL_BETA_ENABLED is a plain variable.
 # Cloudflare dashboard -> Workers & Pages -> binglesignal -> Settings -> Variables and Secrets -> Add
 # (For local testing only, copy this file to .dev.vars and fill it. Never commit .dev.vars.)
 # ======================================================================
@@ -8,6 +8,19 @@
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=          # master key: only here, never in /public or GitHub code
+
+# --- Invited email beta (read-only Gmail and Microsoft mailbox metadata) ---
+EMAIL_BETA_ENABLED=false
+EMAIL_TOKEN_ENCRYPTION_KEY=         # base64-encoded random 32-byte key; encrypts OAuth refresh tokens
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_EMAIL_REDIRECT_URI=          # https://your-domain/api/email/oauth/gmail/callback
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+MICROSOFT_EMAIL_REDIRECT_URI=       # https://your-domain/api/email/oauth/outlook/callback
+EMAIL_BETA_RETURN_URL=              # https://your-domain/#/email
+RESEND_API_KEY=                     # optional until email reports are enabled
+EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@your-domain>
 
 # --- India: Razorpay (Dashboard -> Account & Settings -> API keys; Subscriptions -> Plans; Webhooks) ---
 RAZORPAY_KEY_ID=

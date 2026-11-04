@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker, { verifyRazorpay, verifyStandardWebhook, mapRazorpay, mapGlobal } from '../src/index.js';
+import { betaTestReport, handleEmailRequest, isValidBetaSchedule } from '../src/email-beta.js';
 
 const env = {
   SUPABASE_URL: 'https://proj.supabase.co', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service',
@@ -140,6 +141,7 @@ test('Cancel (Razorpay) cancels at cycle end and marks the row; no login -> 401;
     'select=provider,provider_subscription_id': () => Response.json([{ provider: 'razorpay', provider_subscription_id: 'sub_9', status: 'active', current_period_end: '2026-12-01T00:00:00Z' }]),
     'api.razorpay.com': () => Response.json({ id: 'sub_9' }),
   });
+
   const res = await worker.fetch(post('/api/cancel', {}, { authorization: 'Bearer jwt' }), env);
   assert.equal(res.status, 200);
   assert.equal(calls.find((c) => c.url.includes('/sub_9/cancel')).body.cancel_at_cycle_end, 1);

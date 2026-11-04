@@ -30,4 +30,4 @@ jobs:
           done
       - name: Payments Worker tests
         run: |
-          if [ -f worker/tests/worker.test.mjs ]; then node --test worker/tests/worker.test.mjs; else echo "no worker tests yet"; fi
+          if [ -f worker/tests/worker.test.mjs ]; then node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs; else echo "no worker tests yet"; fi
