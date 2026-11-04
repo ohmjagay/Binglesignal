@@ -177,17 +177,32 @@ async function emailApi(path,method='GET',body){
 }
 async function renderEmailBeta(){
  const box=$('#am'),params=new URLSearchParams(location.hash.split('?')[1]||'');
- const notice=params.get('email_connected')?'Mailbox connected. The beta sync reads mailbox metadata only.':params.get('email_error')?'Mailbox connection did not complete. Please try again.':'';
- box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing preview</h1><p class="tag">Connect a read-only mailbox and test the report schedule. This beta uses fixture summaries only; it does not read email subjects or bodies or send them to an AI service.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Before you connect</h2><p>Google's <code>gmail.metadata</code> permission can access message headers and labels; Microsoft's <code>Mail.ReadBasic</code> permission can access basic fields such as subject and sender. This beta requests only Gmail message IDs and change history, or Outlook message IDs and received times. It does not fetch or store subjects, senders, bodies, or attachments. Google classifies this as a restricted scope and may require verification and a security assessment. Disconnect removes the saved token and sync state.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I understand and consent to read-only mailbox metadata access for this beta.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Send a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages creates a clearly labeled synthetic batch report. The scheduled report is created near the selected local time.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
+ clearInterval(window.emailSummaryPoll);
+ const notice=params.get('email_connected')?'Mailbox connected. You can now request an inbox summary.':params.get('email_error')?'Mailbox connection did not complete. Please try again.':'';
+ box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing</h1><p class="tag">Choose which inbox messages to summarize, or preview a clearly labeled synthetic report. Each run is limited to 500 messages per user-local day.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Connect your mailbox</h2><p>Connecting requires read-only permission to access message content for summaries. Gmail's <code>gmail.readonly</code> and Microsoft's <code>Mail.Read</code> grant this access. Google may require OAuth verification and a security assessment. If you already connected before this permission change, connect again and approve the updated permission.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I consent to the requested read-only mailbox access.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Create a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Summarize inbox emails</h2><p>Choose inbox messages (up to the daily limit, newest first), the latest 50 messages, or a date range of up to 31 calendar days. At most 500 messages are processed per account per local day. Message text is temporarily sent to the configured AI endpoint for summarization; BingleSignal stores the generated summary and processing status, not message bodies.</p><form id="email-summary-form" class="email-settings"><label>Mailbox<select id="email-summary-connection" required></select></label><label>Messages<select id="email-summary-mode"><option value="all">Inbox messages (up to daily limit)</option><option value="latest50">Latest 50</option><option value="date_range">Date range</option></select></label><label id="email-date-from-wrap" hidden>From<input id="email-date-from" type="date"></label><label id="email-date-to-wrap" hidden>To<input id="email-date-to" type="date"></label><label class="email-consent"><input id="email-content-consent" type="checkbox"> I consent to send selected message content to the configured AI summarizer and store its summary in my reports.</label><button class="btn fill" type="submit">Generate email summary</button></form></section><section class="card"><h2 class="serif">Summary jobs</h2><div id="email-summary-jobs">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages detected creates a synthetic report. Scheduled roll-ups remain synthetic in this beta.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
  const message=$('#email-message');
+ const renderJobs=jobs=>{
+  $('#email-summary-jobs').innerHTML=jobs.length?jobs.map(job=>`<article class="email-report"><div class="eyebrow">${esc(job.status)} · ${esc(job.mode)}</div>${job.report?`<h3>${esc(job.report.title)}</h3><pre class="email-summary-text">${esc(job.report.summary)}</pre><small>${job.processed_count} emails summarized · ${esc(new Date(job.updated_at).toLocaleString())}</small>`:`<p>${job.status==='failed'?esc(job.error||'Summary failed. Please try again.'):`Processed ${job.processed_count} of up to ${job.max_messages} emails.`}</p>`}</article>`).join(''):'<p>No inbox summaries yet.</p>';
+ };
  const load=async()=>{
-  const data=await emailApi('/api/email/settings');
+  const [data,summaryData]=await Promise.all([emailApi('/api/email/settings'),emailApi('/api/email/summaries')]);
   $('#email-timezone').value=data.settings.timezone;
   $('#email-time').value=data.settings.digest_time;
   $('#email-connections').innerHTML=data.connections.length?data.connections.map(c=>`<div class="email-connection"><div><b>${esc(c.provider)}</b> · ${esc(c.provider_email)}<small>Last sync: ${c.last_sync_at?esc(new Date(c.last_sync_at).toLocaleString()):'pending'}${c.last_error?' · '+esc(c.last_error):''}</small></div><button class="link" data-email-action="disconnect" data-provider="${esc(c.provider)}">Disconnect</button></div>`).join(''):'<p>No mailboxes connected.</p>';
+  $('#email-summary-connection').innerHTML=data.connections.map(c=>`<option value="${esc(c.id)}">${esc(c.provider)} · ${esc(c.provider_email)}</option>`).join('');
+  $('#email-summary-form button[type=submit]').disabled=!data.connections.length;
+  renderJobs(summaryData.jobs);
   $('#email-reports').innerHTML=data.reports.length?data.reports.map(r=>`<article class="email-report"><div class="eyebrow">${esc(r.report.label||'SYNTHETIC EXAMPLE')} · ${esc(r.kind)}</div><h3>${esc(r.report.title||'Beta report')}</h3><p>${esc(r.report.summary||'')}</p><small>${r.email_count} new messages detected from metadata · ${esc(new Date(r.created_at).toLocaleString())} · email: ${esc(r.delivery_status)}</small></article>`).join(''):'<p>No reports yet. Use the synthetic test button to preview one.</p>';
  };
  try{await load()}catch(error){message.textContent=error.message}
+ window.emailSummaryPoll=setInterval(async()=>{if(!location.hash.startsWith('#/email')){clearInterval(window.emailSummaryPoll);return}try{renderJobs((await emailApi('/api/email/summaries')).jobs)}catch(error){message.textContent=error.message}},30000);
+ $('#email-summary-mode').onchange=()=>{
+  const show=$('#email-summary-mode').value==='date_range';
+  $('#email-date-from-wrap').hidden=!show;
+  $('#email-date-to-wrap').hidden=!show;
+  $('#email-date-from').required=show;
+  $('#email-date-to').required=show;
+ };
  box.onclick=async(event)=>{
   const button=event.target.closest('[data-email-action]');if(!button)return;
   const action=button.dataset.emailAction;button.disabled=true;message.textContent='';
@@ -212,6 +227,21 @@ async function renderEmailBeta(){
   event.preventDefault();const button=event.submitter;button.disabled=true;message.textContent='';
   try{await emailApi('/api/email/settings','POST',{timezone:$('#email-timezone').value,digest_time:$('#email-time').value});message.textContent='Schedule saved.'}
   catch(error){message.textContent=error.message}
+  finally{button.disabled=false}
+ }
+ $('#email-summary-form').onsubmit=async(event)=>{
+  event.preventDefault();const button=event.submitter;button.disabled=true;message.textContent='';
+  try{
+   if(!$('#email-content-consent').checked)throw new Error('Consent is required before message content is sent to the AI summarizer.');
+   const mode=$('#email-summary-mode').value;
+   await emailApi('/api/email/summaries','POST',{
+    connection_id:$('#email-summary-connection').value,mode,content_consent:true,
+    ...(mode==='date_range'?{date_from:$('#email-date-from').value,date_to:$('#email-date-to').value}:{})
+   });
+   $('#email-content-consent').checked=false;
+   message.textContent='Summary queued. It will appear under Summary jobs as the Worker processes your selected messages.';
+   await load()
+  }catch(error){message.textContent=error.message}
   finally{button.disabled=false}
  }
 }

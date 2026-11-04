@@ -8,7 +8,7 @@ directory = "./public"
 run_worker_first = ["/api/*"]
 
 [triggers]
-crons = ["0 */6 * * *", "*/5 * * * *", "*/15 * * * *"]
+crons = ["0 */6 * * *", "* * * * *", "*/15 * * * *"]
 
 [observability]
 enabled = true

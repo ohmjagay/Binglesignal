@@ -9,16 +9,19 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=          # master key: only here, never in /public or GitHub code
 
-# --- Invited email beta (read-only Gmail and Microsoft mailbox metadata) ---
+# --- Invited email beta ---
 EMAIL_BETA_ENABLED=false
 EMAIL_TOKEN_ENCRYPTION_KEY=         # base64-encoded random 32-byte key; encrypts OAuth refresh tokens
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=                   # OAuth client for Gmail API
+GOOGLE_CLIENT_SECRET=               # secret
 GOOGLE_EMAIL_REDIRECT_URI=          # https://your-domain/api/email/oauth/gmail/callback
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=                # OAuth app registration for Microsoft Graph
+MICROSOFT_CLIENT_SECRET=            # secret
 MICROSOFT_EMAIL_REDIRECT_URI=       # https://your-domain/api/email/oauth/outlook/callback
 EMAIL_BETA_RETURN_URL=              # https://your-domain/#/email
+EMAIL_AI_ENDPOINT=                  # HTTPS OpenAI-compatible /v1/chat/completions endpoint
+EMAIL_AI_API_KEY=                   # secret; for the configured self-hosted summarizer
+EMAIL_AI_MODEL=                     # model name served by EMAIL_AI_ENDPOINT
 RESEND_API_KEY=                     # optional until email reports are enabled
 EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@your-domain>
 
