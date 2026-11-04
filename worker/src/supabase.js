@@ -11,11 +11,18 @@ export const supabaseRequest = (env, path, init = {}) =>
 
 export async function authUser(req, env) {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!token || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return null;
+  if (!token) return null;
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be configured for email beta authentication');
+  }
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
     headers: { apikey: env.SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
   });
-  return response.ok ? response.json() : null;
+  if (!response.ok) {
+    console.warn('email beta Supabase rejected the access token', response.status);
+    return null;
+  }
+  return response.json();
 }
 
 export async function hasProAccess(userId, env) {

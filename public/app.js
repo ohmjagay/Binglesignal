@@ -34,9 +34,10 @@ const SB=BS.supabaseUrl,KEY=BS.supabaseKey;let S=store.get('bs_sess'),pt;
 async function api(path,o={}){let r;try{r=await fetch(SB+path,{method:o.m||'GET',headers:{apikey:KEY,'Content-Type':'application/json',...(o.t?{Authorization:'Bearer '+o.t}:{}),...(o.h||{})},body:o.b?JSON.stringify(o.b):undefined})}catch{throw new Error('Network problem - please check your connection and try again.')}
  let j=null;try{j=await r.json()}catch{}
  if(!r.ok)throw new Error(j?.msg||j?.error_description||j?.message||j?.error||'Something went wrong ('+r.status+')');return j}
-function setSess(j){S={at:j.access_token,rt:j.refresh_token,exp:Date.now()+(+j.expires_in||3600)*1000,u:j.user||S?.u||null};store.set('bs_sess',S);paintHs();return S}
+function jwtExpiry(value){try{const p=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');return Number(JSON.parse(atob(p.padEnd(Math.ceil(p.length/4)*4,'='))).exp)*1000||0}catch{return 0}}
+function setSess(j){const localExpiry=Date.now()+(+j.expires_in||3600)*1000,jwtExp=jwtExpiry(j.access_token);S={at:j.access_token,rt:j.refresh_token,exp:jwtExp?Math.min(localExpiry,jwtExp):localExpiry,u:j.user||S?.u||null};store.set('bs_sess',S);paintHs();return S}
 function drop(){S=null;store.del('bs_sess');paintHs()}
-async function token(){if(!S)return null;if(Date.now()>S.exp-60000){try{setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
+async function token(forceRefresh=false){if(!S)return null;const expiry=Math.min(Number(S.exp)||Infinity,jwtExpiry(S.at)||Infinity);if(forceRefresh||!Number.isFinite(expiry)||Date.now()>=expiry-60000){try{if(!S.rt)throw new Error('Refresh token is missing');setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
 async function loadUser(){const t=await token();if(!t)return;S.u=await api('/auth/v1/user',{t});store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
 async function signUp(email,password,name){const j=await api('/auth/v1/signup',{m:'POST',b:{email,password,data:{full_name:name||email.split('@')[0]}}});return j.access_token?setSess(j):null}
 const signIn=async(email,password)=>setSess(await api('/auth/v1/token?grant_type=password',{m:'POST',b:{email,password}}));
@@ -166,8 +167,10 @@ function renderWatch(){
  const W=rank(POOL.items,BS.watchCap||30,true);
  $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
 async function emailApi(path,method='GET',body){
- const access=await token();if(!access)throw new Error('Please sign in again.');
- const response=await fetch(path,{method,headers:{authorization:'Bearer '+access,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ let access=await token();if(!access)throw new Error('Your sign-in expired. Please sign in again.');
+ const send=access=>fetch(path,{method,headers:{authorization:'Bearer '+access,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ let response=await send(access);
+ if(response.status===401){access=await token(true);if(!access)throw new Error('Your sign-in expired. Please sign in again.');response=await send(access)}
  let result={};try{result=await response.json()}catch{}
  if(!response.ok)throw new Error(result.error||'Email beta request failed ('+response.status+')');
  return result

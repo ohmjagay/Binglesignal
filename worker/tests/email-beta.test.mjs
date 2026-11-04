@@ -67,6 +67,14 @@ test('Email beta requires login and a Pro subscription', async () => {
   assert.equal(noPro.status, 403);
 });
 
+test('Email beta reports missing Supabase auth configuration instead of a login failure', async () => {
+  const response = await worker.fetch(new Request('https://binglesignal.com/api/email/settings', {
+    headers: { authorization: 'Bearer test-token' },
+  }), { ...baseEnv, SUPABASE_ANON_KEY: '' });
+  assert.equal(response.status, 500);
+  assert.match((await response.json()).error, /server error/);
+});
+
 test('Gmail OAuth requests metadata scope and requires the beta consent flag', async () => {
   const beta = { user_id: user.id, enabled: true };
   fakeFetch({
