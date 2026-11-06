@@ -7,6 +7,6 @@
   "build": "node -e \"console.log('Static site - nothing to build')\"",
   "deploy": "wrangler deploy",
   "ingest": "node scripts/ingest.mjs",
-  "test": "node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs worker/tests/llm.test.mjs worker/tests/crypto.test.mjs"
+  "test": "node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs worker/tests/llm.test.mjs worker/tests/crypto.test.mjs worker/tests/public-mfa.test.mjs"
  }
 }

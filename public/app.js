@@ -1,5 +1,6 @@
 // BingleSignal app layer: preferences, pickers, sign-in, personal READ / WATCH feeds and the ranking engine.
 import {CATS,CAT,GROUPS,LBL,CC,ISO,EUROPE,cname} from './taxonomy.js';
+import {listMfaFactors} from './mfa.js';
 const BS=window.BS||{},$=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=u=>/^https?:\/\//i.test(u)?esc(u):'#',short=(s,n)=>s.length>n?s.slice(0,n-1).replace(/\s+\S*$/,'')+'…':s,
@@ -41,9 +42,7 @@ function drop(){S=null;store.del('bs_sess');paintHs()}
 async function token(forceRefresh=false){if(!S)return null;const expiry=Math.min(Number(S.exp)||Infinity,jwtExpiry(S.at)||Infinity);if(forceRefresh||!Number.isFinite(expiry)||Date.now()>=expiry-60000){try{if(!S.rt)throw new Error('Refresh token is missing');setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
 async function loadUser(){const t=await token();if(!t)return;S.u=await api('/auth/v1/user',{t});store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
 async function mfaFactors(accessToken=S?.at){
- if(!accessToken)throw new Error('Sign in before managing multi-factor authentication.');
- const result=await api('/auth/v1/factors',{t:accessToken});
- return result.all||result.factors||result.totp||[];
+ return listMfaFactors(api,accessToken);
 }
 async function verifyTotp(factorId,code,accessToken=S?.at){
  const challenge=await api('/auth/v1/factors/'+encodeURIComponent(factorId)+'/challenge',{m:'POST',t:accessToken,b:{}});
