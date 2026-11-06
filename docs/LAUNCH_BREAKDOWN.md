@@ -50,8 +50,8 @@ Built 1 Nov 2026 · every process, feature and fix in this version · written fo
 
 | Rail | For | Provider | What the app does with no keys |
 |---|---|---|---|
-| India | ₹99 / ₹299 monthly, ₹999 / ₹2,999 yearly | Razorpay Subscriptions (UPI AutoPay and cards) | The Pricing button says "Payments opening soon"; the trial keeps running |
-| Worldwide | $2.99 / $5.99 monthly, $29 / $59 yearly | Dodo Payments (merchant of record: handles foreign VAT and sales tax) | Same |
+| India | ₹299 / ₹799 monthly, ₹2,999 / ₹7,999 yearly | Razorpay Subscriptions (UPI AutoPay and cards) | The Pricing button says "Payments opening soon"; the trial keeps running |
+| Worldwide | $5 / $11 monthly, $50 / $110 yearly | Dodo Payments (merchant of record: handles foreign VAT and sales tax) | Same |
 
 `/api/health` tells the pricing page which rails are ready, without exposing any secret. A webhook with a missing or wrong signature is rejected (401).
 
@@ -86,7 +86,7 @@ Built 1 Nov 2026 · every process, feature and fix in this version · written fo
 | Every local link and script in the pages | All resolve |
 | Phone-width render (above) | 0 of 28 overflow |
 
-**Not tested, and I cannot from here:** a physical Android phone; real Supabase login (email and Google); real Razorpay or Dodo accounts; the live Cloudflare deploy of the Worker; real email delivery; any load test; the AdSense behaviour.
+**Not tested, and I cannot from here:** a physical Android phone; real Supabase login (email and Google); real Razorpay or Dodo accounts; the live Cloudflare deploy of the Worker; real email delivery; any load test.
 
 ## 7. Can it carry 100,000 users?
 
@@ -121,7 +121,7 @@ Built 1 Nov 2026 · every process, feature and fix in this version · written fo
 
 1. Google News is still about 64% of story links, and there are no primary sources yet (the Part 3 gate G1 has not passed).
 2. The executive-grade layer is not in this build (§0).
-3. The AdSense script is still in `index.html`. Keep Auto ads **off**, and keep ads out of the member product.
+3. AdSense has been removed from `index.html`. Keep ads out of the member product.
 4. The legal pages are plain-language drafts. Have a lawyer review them, and fill in the Grievance Officer name in `contact.html`.
 5. `config.js`: `x`, `instagram` and `youtube` are empty.
 6. No sign-up bot protection yet (Cloudflare Turnstile is planned), so repeat trials are possible.

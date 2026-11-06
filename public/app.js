@@ -35,26 +35,84 @@ async function api(path,o={}){let r;try{r=await fetch(SB+path,{method:o.m||'GET'
  let j=null;try{j=await r.json()}catch{}
  if(!r.ok)throw new Error(j?.msg||j?.error_description||j?.message||j?.error||'Something went wrong ('+r.status+')');return j}
 function jwtExpiry(value){try{const p=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');return Number(JSON.parse(atob(p.padEnd(Math.ceil(p.length/4)*4,'='))).exp)*1000||0}catch{return 0}}
+function jwtAal(value){try{const p=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(p.padEnd(Math.ceil(p.length/4)*4,'='))).aal||''}catch{return''}}
 function setSess(j){const localExpiry=Date.now()+(+j.expires_in||3600)*1000,jwtExp=jwtExpiry(j.access_token);S={at:j.access_token,rt:j.refresh_token,exp:jwtExp?Math.min(localExpiry,jwtExp):localExpiry,u:j.user||S?.u||null};store.set('bs_sess',S);paintHs();return S}
 function drop(){S=null;store.del('bs_sess');paintHs()}
 async function token(forceRefresh=false){if(!S)return null;const expiry=Math.min(Number(S.exp)||Infinity,jwtExpiry(S.at)||Infinity);if(forceRefresh||!Number.isFinite(expiry)||Date.now()>=expiry-60000){try{if(!S.rt)throw new Error('Refresh token is missing');setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
 async function loadUser(){const t=await token();if(!t)return;S.u=await api('/auth/v1/user',{t});store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
-async function signUp(email,password,name){const j=await api('/auth/v1/signup',{m:'POST',b:{email,password,data:{full_name:name||email.split('@')[0]}}});return j.access_token?setSess(j):null}
-const signIn=async(email,password)=>setSess(await api('/auth/v1/token?grant_type=password',{m:'POST',b:{email,password}}));
-const google=()=>{location.href=SB+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(location.origin+'/')};
+async function mfaFactors(accessToken=S?.at){
+ if(!accessToken)throw new Error('Sign in before managing multi-factor authentication.');
+ const result=await api('/auth/v1/factors',{t:accessToken});
+ return result.all||result.factors||result.totp||[];
+}
+async function verifyTotp(factorId,code,accessToken=S?.at){
+ const challenge=await api('/auth/v1/factors/'+encodeURIComponent(factorId)+'/challenge',{m:'POST',t:accessToken,b:{}});
+ return api('/auth/v1/factors/'+encodeURIComponent(factorId)+'/verify',{m:'POST',t:accessToken,b:{challenge_id:challenge.id||challenge.challenge_id,code}});
+}
+async function signUp(email,password,name,captchaToken){const j=await api('/auth/v1/signup',{m:'POST',b:{email,password,data:{full_name:name||email.split('@')[0]},captcha_token:captchaToken}});return j.access_token?setSess(j):null}
+const signIn=async(email,password,captchaToken)=>setSess(await api('/auth/v1/token?grant_type=password',{m:'POST',b:{email,password,captcha_token:captchaToken}}));
+let authCaptcha='',captchaWidget=null,captchaLoader;
+function loadTurnstile(){
+ if(!BS.turnstileSiteKey)throw new Error('Sign-in protection is not configured. Please contact support.');
+ if(window.turnstile)return Promise.resolve(window.turnstile);
+ if(!captchaLoader)captchaLoader=new Promise((resolve,reject)=>{
+  const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.defer=true;
+  script.onload=()=>window.turnstile?resolve(window.turnstile):reject(new Error('Could not load sign-in protection.'));
+  script.onerror=()=>reject(new Error('Could not load sign-in protection.'));
+  document.head.appendChild(script)
+ });
+ return captchaLoader
+}
+async function setupCaptcha(){
+ const box=$('#captcha');if(!box)return;
+ try{
+  const turnstile=await loadTurnstile();if(!box.isConnected)return;
+  authCaptcha='';captchaWidget=turnstile.render(box,{sitekey:BS.turnstileSiteKey,callback:token=>{authCaptcha=token},'expired-callback':()=>{authCaptcha=''},'error-callback':()=>{authCaptcha=''}});
+ }catch(error){const er=$('#er');if(er)er.textContent=error.message}
+}
+const google=()=>{if(!authCaptcha){const er=$('#er');if(er)er.textContent='Complete the security check first.';return}
+ location.href=SB+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(location.origin+'/')+'&captcha_token='+encodeURIComponent(authCaptcha)};
 function fromHash(){const h=new URLSearchParams(location.hash.slice(1));
  if(h.get('access_token')){setSess({access_token:h.get('access_token'),refresh_token:h.get('refresh_token'),expires_in:h.get('expires_in')});history.replaceState(null,'',location.pathname+location.search);return'ok'}
  if(h.get('error')){history.replaceState(null,'',location.pathname+location.search);return h.get('error_description')||h.get('error')}return''}
 function push(){clearTimeout(pt);pt=setTimeout(async()=>{const t=await token();if(!t||!S?.u)return;try{await api('/rest/v1/bs_profiles?on_conflict=id',{m:'POST',t,h:{Prefer:'resolution=merge-duplicates,return=minimal'},b:{id:S.u.id,data:{d:P,l:PR},updated_at:new Date().toISOString()}})}catch{}},1500)}
 async function pull(){const t=await token();if(!t||!S?.u)return false;try{const r=await api('/rest/v1/bs_profiles?select=data&id=eq.'+S.u.id,{t}),d=r[0]?.data;
  if(d?.d&&Math.max(d.d.ts||0,d.l?.ts||0)>Math.max(P.ts||0,PR.ts||0)){Object.assign(P,d.d);Object.assign(PR,d.l||{});store.set('bs3',P);store.set('bs4',PR);return true}push()}catch{}return false}
-async function entered(){try{await loadUser()}catch{}closeModal();await pull();const same=location.hash==='#/me/read';location.hash='#/me/read';if(same)route();document.dispatchEvent(new Event('bs:prefs'))}
+function openMfaPrompt(factor){
+ const m=modal(`<h2 class="serif">Verify your authenticator</h2><p class="mu">Enter the current 6-digit code from your authenticator app to finish signing in.</p><input id="mfa-login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" aria-label="6-digit authenticator code"><p id="mfa-login-error" class="err" role="alert"></p><button class="btn fill wide" id="mfa-login-verify">Verify and continue</button>`,'');
+ const verify=async()=>{
+  const code=$('#mfa-login-code').value.trim(),button=$('#mfa-login-verify'),error=$('#mfa-login-error');
+  if(!/^\d{6}$/.test(code)){error.textContent='Enter the 6-digit code from your authenticator app.';return}
+  button.disabled=true;error.textContent='';
+  try{
+   const session=await verifyTotp(factor.id,code);
+   if(!session.access_token)throw new Error('Multi-factor verification did not return a valid session.');
+   setSess(session);await entered()
+  }catch(failure){error.textContent=failure.message;button.disabled=false}
+ };
+ m.onclick=e=>{if(e.target.id==='mfa-login-verify')verify()};
+ m.onkeydown=e=>{if(e.key==='Enter')verify()};
+ $('#mfa-login-code').focus()
+}
+async function requireMfaIfConfigured(){
+ if(!S||jwtAal(S.at)==='aal2')return false;
+ let factor;
+ try{factor=(await mfaFactors()).find(item=>item.factor_type==='totp'&&item.status==='verified')}
+ catch(error){openAuth('Sign in could not confirm your account security settings. Please try again.','in');$('#er').textContent=error.message;return true}
+ if(!factor)return false;
+ openMfaPrompt(factor);return true
+}
+async function entered(){
+ try{await loadUser()}catch{}
+ if(await requireMfaIfConfigured())return;
+ closeModal();await pull();const same=location.hash==='#/me/read';location.hash='#/me/read';if(same)route();document.dispatchEvent(new Event('bs:prefs'))
+}
 async function out(){const t=S?.at;try{if(t)await api('/auth/v1/logout',{m:'POST',t})}catch{}drop();const same=location.hash==='#/';location.hash='#/';if(same)route()}
 
 /* ---------- modals ---------- */
 let onClose=null;
 function modal(html,cls=''){const m=$('#modal');onClose=null;m.onclick=null;m.onkeydown=null;m.className='mod '+cls;m.innerHTML=`<div role="dialog" aria-modal="true"><button class="x" aria-label="Close">×</button>${html}</div>`;m.hidden=false;document.body.style.overflow='hidden';return m}
-function closeModal(){const m=$('#modal');if(m.hidden)return;m.hidden=true;m.innerHTML='';document.body.style.overflow='';const f=onClose;onClose=null;f?.()}
+function closeModal(){const m=$('#modal');if(m.hidden)return;m.hidden=true;m.innerHTML='';document.body.style.overflow='';if(captchaWidget!==null)window.turnstile?.remove(captchaWidget);captchaWidget=null;authCaptcha='';const f=onClose;onClose=null;f?.()}
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal'||e.target.closest('.x'))closeModal()});
 addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
 
@@ -75,17 +133,19 @@ export function openInterests(done){
  onClose=()=>{savePrefs();done?.()}}
 
 export function openAuth(msg,mode='up'){
+ if(captchaWidget!==null)window.turnstile?.remove(captchaWidget);captchaWidget=null;authCaptcha='';
  const up=mode==='up',lab=up?'Create account':'Log in',
- m=modal(`<h2 class="serif">${up?'Create your free account':'Welcome back'}</h2><p class="mu">${esc(msg||'')}</p><button class="btn gbtn" id="go">Continue with Google</button><div class="or"><span>or use email</span></div><div class="tabs"><button data-m="up" class="${up?'on':''}">Sign up</button><button data-m="in" class="${up?'':'on'}">Log in</button></div>${up?`<input id="an" placeholder="Your name" autocomplete="name" value="${esc(P.name)}">`:''}<input id="ae" type="email" placeholder="Email" autocomplete="email"><input id="ap" type="password" placeholder="Password (6+ characters)" autocomplete="${up?'new':'current'}-password"><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="as">${lab}</button><small class="mu">By continuing you agree to our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/copyright" target="_blank">Copyright notice</a>.</small>`),
+ m=modal(`<h2 class="serif">${up?'Create your free account':'Welcome back'}</h2><p class="mu">${esc(msg||'')}</p><button class="btn gbtn" id="go">Continue with Google</button><div class="or"><span>or use email</span></div><div class="tabs"><button data-m="up" class="${up?'on':''}">Sign up</button><button data-m="in" class="${up?'':'on'}">Log in</button></div>${up?`<input id="an" placeholder="Your name" autocomplete="name" value="${esc(P.name)}">`:''}<input id="ae" type="email" placeholder="Email" autocomplete="email"><input id="ap" type="password" placeholder="Password (6+ characters)" autocomplete="${up?'new':'current'}-password"><div id="captcha" aria-label="Security check"></div><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="as">${lab}</button><small class="mu">By continuing you agree to our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/copyright" target="_blank">Copyright notice</a>.</small>`),
  go=async()=>{const er=$('#er'),b=$('#as'),email=$('#ae').value.trim(),pw=$('#ap').value;er.style.color='';er.textContent='';
   if(!/^\S+@\S+\.\S+$/.test(email))return er.textContent='Please enter a valid email address.';
   if(pw.length<6)return er.textContent='Password must be at least 6 characters.';
+  if(!authCaptcha)return er.textContent='Complete the security check before continuing.';
   b.disabled=true;b.textContent='Please wait…';
-  try{let ok;if(up){const nm=$('#an').value.trim();if(nm){P.name=nm.slice(0,24);savePrefs()}ok=await signUp(email,pw,P.name)}else ok=await signIn(email,pw);
-   if(!ok){er.style.color='#CFE6D0';er.textContent='Account created. Check your email to confirm it, then log in.';b.disabled=false;b.textContent=lab;return}
-   await entered()}catch(e){er.textContent=e.message;b.disabled=false;b.textContent=lab}};
+  try{let ok;if(up){const nm=$('#an').value.trim();if(nm){P.name=nm.slice(0,24);savePrefs()}ok=await signUp(email,pw,P.name,authCaptcha)}else ok=await signIn(email,pw,authCaptcha);
+   if(!ok){er.style.color='#CFE6D0';er.textContent='Account created. Check your email to confirm it, then log in.';b.disabled=false;b.textContent=lab;authCaptcha='';window.turnstile?.reset(captchaWidget);return}
+   await entered()}catch(e){er.textContent=e.message;b.disabled=false;b.textContent=lab;authCaptcha='';window.turnstile?.reset(captchaWidget)}};
  m.onclick=e=>{const t=e.target;if(t.id==='go')google();else if(t.id==='as')go();else if(t.dataset.m)openAuth(msg,t.dataset.m)};
- m.onkeydown=e=>{if(e.key==='Enter')go()};$('#ae')?.focus()}
+ m.onkeydown=e=>{if(e.key==='Enter')go()};$('#ae')?.focus();setupCaptcha()}
 export function tune(){if(!P.sel.length)return'Pick at least one interest first.';savePrefs();if(S){location.hash='#/me/read';return''}openAuth(`Almost there${P.name?', '+P.name:''} - create your free account to unlock your personal Read and Watch feeds.`,'up');return''}
 
 /* ---------- header and footer ---------- */
@@ -179,7 +239,7 @@ async function renderEmailBeta(){
  const box=$('#am'),params=new URLSearchParams(location.hash.split('?')[1]||'');
  clearInterval(window.emailSummaryPoll);
  const notice=params.get('email_connected')?'Mailbox connected. You can now request an inbox summary.':params.get('email_error')?'Mailbox connection did not complete. Please try again.':'';
- box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing</h1><p class="tag">Choose which inbox messages to summarize, or preview a clearly labeled synthetic report. Each run is limited to 500 messages per user-local day.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Connect your mailbox</h2><p>Connecting requires read-only permission to access message content for summaries. Gmail's <code>gmail.readonly</code> and Microsoft's <code>Mail.Read</code> grant this access. Google may require OAuth verification and a security assessment. If you already connected before this permission change, connect again and approve the updated permission.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I consent to the requested read-only mailbox access.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Create a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Summarize inbox emails</h2><p>Choose inbox messages (up to the daily limit, newest first), the latest 50 messages, or a date range of up to 31 calendar days. At most 500 messages are processed per account per local day. Message text is temporarily sent to the configured AI endpoint for summarization; BingleSignal stores the generated summary and processing status, not message bodies.</p><form id="email-summary-form" class="email-settings"><label>Mailbox<select id="email-summary-connection" required></select></label><label>Messages<select id="email-summary-mode"><option value="all">Inbox messages (up to daily limit)</option><option value="latest50">Latest 50</option><option value="date_range">Date range</option></select></label><label id="email-date-from-wrap" hidden>From<input id="email-date-from" type="date"></label><label id="email-date-to-wrap" hidden>To<input id="email-date-to" type="date"></label><label class="email-consent"><input id="email-content-consent" type="checkbox"> I consent to send selected message content to the configured AI summarizer and store its summary in my reports.</label><button class="btn fill" type="submit">Generate email summary</button></form></section><section class="card"><h2 class="serif">Summary jobs</h2><div id="email-summary-jobs">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages detected creates a synthetic report. Scheduled roll-ups remain synthetic in this beta.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
+ box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing</h1><p class="tag">Choose which inbox messages to summarize, or preview a clearly labeled synthetic report. Each run is limited to 500 messages per user-local day.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Connect your mailbox</h2><p>Connecting requires read-only permission to access message content for summaries. Gmail's <code>gmail.readonly</code> and Microsoft's <code>Mail.Read</code> grant this access. Google may require OAuth verification and a security assessment. If you already connected before this permission change, connect again and approve the updated permission.</p><p><b>What BingleSignal reads:</b> the sender, subject and text of messages you choose to summarize, read-only. <b>What we never do:</b> send, delete, move or label your email; sell your data; show ads; or use your email to train AI models. Message text is sent to the configured AI provider only to produce your summary, then discarded. We store the summary encrypted for up to 30 days. Delete everything from Account → Privacy.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I understand and agree to this processing.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Create a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Summarize inbox emails</h2><p>Choose inbox messages (up to the daily limit, newest first), the latest 50 messages, or a date range of up to 31 calendar days. At most 500 messages are processed per account per local day. Message text is temporarily sent to the configured AI endpoint for summarization; BingleSignal stores encrypted summaries and processing status, not message bodies.</p><form id="email-summary-form" class="email-settings"><label>Mailbox<select id="email-summary-connection" required></select></label><label>Messages<select id="email-summary-mode"><option value="all">Inbox messages (up to daily limit)</option><option value="latest50">Latest 50</option><option value="date_range">Date range</option></select></label><label id="email-date-from-wrap" hidden>From<input id="email-date-from" type="date"></label><label id="email-date-to-wrap" hidden>To<input id="email-date-to" type="date"></label><label class="email-consent"><input id="email-content-consent" type="checkbox"> I consent to send selected message content to the configured AI summarizer and store its encrypted summary in my reports.</label><button class="btn fill" type="submit">Generate email summary</button></form></section><section class="card"><h2 class="serif">Summary jobs</h2><div id="email-summary-jobs">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages detected creates a synthetic report. Scheduled roll-ups remain synthetic in this beta.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
  const message=$('#email-message');
  const renderJobs=jobs=>{
   $('#email-summary-jobs').innerHTML=jobs.length?jobs.map(job=>`<article class="email-report"><div class="eyebrow">${esc(job.status)} · ${esc(job.mode)}</div>${job.report?`<h3>${esc(job.report.title)}</h3><pre class="email-summary-text">${esc(job.report.summary)}</pre><small>${job.processed_count} emails summarized · ${esc(new Date(job.updated_at).toLocaleString())}</small>`:`<p>${job.status==='failed'?esc(job.error||'Summary failed. Please try again.'):`Processed ${job.processed_count} of up to ${job.max_messages} emails.`}</p>`}</article>`).join(''):'<p>No inbox summaries yet.</p>';
@@ -188,9 +248,10 @@ async function renderEmailBeta(){
   const [data,summaryData]=await Promise.all([emailApi('/api/email/settings'),emailApi('/api/email/summaries')]);
   $('#email-timezone').value=data.settings.timezone;
   $('#email-time').value=data.settings.digest_time;
-  $('#email-connections').innerHTML=data.connections.length?data.connections.map(c=>`<div class="email-connection"><div><b>${esc(c.provider)}</b> · ${esc(c.provider_email)}<small>Last sync: ${c.last_sync_at?esc(new Date(c.last_sync_at).toLocaleString()):'pending'}${c.last_error?' · '+esc(c.last_error):''}</small></div><button class="link" data-email-action="disconnect" data-provider="${esc(c.provider)}">Disconnect</button></div>`).join(''):'<p>No mailboxes connected.</p>';
-  $('#email-summary-connection').innerHTML=data.connections.map(c=>`<option value="${esc(c.id)}">${esc(c.provider)} · ${esc(c.provider_email)}</option>`).join('');
-  $('#email-summary-form button[type=submit]').disabled=!data.connections.length;
+  $('#email-connections').innerHTML=data.connections.length?data.connections.map(c=>`<div class="email-connection"><div><b>${esc(c.provider)}</b> · ${esc(c.provider_email)}<small>${c.status==='needs_reconnect'?'Reconnect required · ':''}Last sync: ${c.last_sync_at?esc(new Date(c.last_sync_at).toLocaleString()):'pending'}${c.last_error?' · '+esc(c.last_error):''}</small></div><button class="link" data-email-action="disconnect" data-provider="${esc(c.provider)}">Disconnect</button></div>`).join(''):'<p>No mailboxes connected.</p>';
+  const activeConnections=data.connections.filter(c=>c.status==='active');
+  $('#email-summary-connection').innerHTML=activeConnections.map(c=>`<option value="${esc(c.id)}">${esc(c.provider)} · ${esc(c.provider_email)}</option>`).join('');
+  $('#email-summary-form button[type=submit]').disabled=!activeConnections.length;
   renderJobs(summaryData.jobs);
   $('#email-reports').innerHTML=data.reports.length?data.reports.map(r=>`<article class="email-report"><div class="eyebrow">${esc(r.report.label||'SYNTHETIC EXAMPLE')} · ${esc(r.kind)}</div><h3>${esc(r.report.title||'Beta report')}</h3><p>${esc(r.report.summary||'')}</p><small>${r.email_count} new messages detected from metadata · ${esc(new Date(r.created_at).toLocaleString())} · email: ${esc(r.delivery_status)}</small></article>`).join(''):'<p>No reports yet. Use the synthetic test button to preview one.</p>';
  };
@@ -272,7 +333,7 @@ export async function route(){
  const rid=++RID;obs?.disconnect();sobs?.disconnect();VIS.clear();
  const r=fromHash();
  if(/^#\/(pricing|paused|account)(\/|$)/.test(location.hash))return;
- if(r==='ok'){await loadUser().catch(()=>{});await pull();location.hash='#/me/read';return}
+ if(r==='ok'){await entered();return}
  if(r)openAuth('Sign-in did not complete: '+r,'in');
  if(/^#\/email(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to use the invited email beta.','in');return}
   home.hidden=true;app.hidden=false;shell('email');$('#am').innerHTML='<div class="end">Loading email beta…</div>';await renderEmailBeta();scrollTo(0,0);return}
@@ -283,6 +344,14 @@ export async function route(){
  await loadPool();if(rid!==RID||!location.hash.startsWith('#/me'))return;
  await window.BSAccess?.ready;if(rid!==RID||!location.hash.startsWith('#/me'))return;
  TAB==='read'?renderRead():renderWatch();scrollTo(0,0)}
-window.BSAuth={token:()=>token(),user:()=>S?.u||null,has:()=>!!S};
+window.BSAuth={
+ token:()=>token(),
+ user:()=>S?.u||null,
+ has:()=>!!S,
+ assurance:()=>jwtAal(S?.at||''),
+ factors:()=>mfaFactors(),
+ enrollTotp:()=>api('/auth/v1/factors',{m:'POST',t:S?.at,b:{factor_type:'totp',friendly_name:'BingleSignal mailbox protection'}}),
+ verifyTotp:async(id,code)=>{const session=await verifyTotp(id,code);if(!session.access_token)throw new Error('Multi-factor verification did not return a valid session.');setSess(session);return session}
+};
 paintHs();paintFooter();addEventListener('hashchange',route);
 (async()=>{if(S&&!S.u)await loadUser().catch(()=>{});await route();if(S)pull().then(c=>{if(c){document.dispatchEvent(new Event('bs:prefs'));if(!$('#app').hidden)route()}})})();

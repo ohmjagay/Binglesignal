@@ -3,16 +3,13 @@
 const BS = window.BS || (window.BS = {}), $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
-const PRICE = {
-  IN: { c: '₹', lite: { month: '99', year: '999' }, pro: { month: '299', year: '2,999' } },
-  GL: { c: '$', lite: { month: '2.99', year: '29' }, pro: { month: '5.99', year: '59' } },
-};
+const PRICE = BS.prices;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
 const FEATS = {
   lite: [['Finite daily edition, all topics and regions', 1], ['READ list of 40 stories and WATCH list of 8 videos', 1], ['Original source and source count on stories', 1], ['"Why it matters" line on top stories', 0], ['30-day archive search', 0]],
   pro: [['Everything in Lite', 1], ['Endless mix: READ list of 200 and WATCH list of 30', 1], ['Watchlist alerts', 0], ['Meeting prep packs', 0], ['3 Deep Dives a month', 0], ['365-day archive search', 0]],
 };
-let ACC = null, ENVI = null, INT = 'month', busy = false;
+let ACC = null, ENVI = null, INT = 'month', busy = false, pendingMfaEnrollment = null;
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
 const authed = () => !!window.BSAuth?.has?.();
@@ -122,7 +119,96 @@ async function account() {
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
     body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p><a class="btn" href="#/pricing">${a.status === 'active' ? 'Change plan' : 'Choose a plan'}</a> ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
-  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
+  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Account security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
+  await refreshMfaStatus();
+  $('#mfa-enrollment-form').onsubmit = verifyMfaEnrollment;
+}
+
+async function refreshMfaStatus() {
+  const status = $('#mfa-status');
+  const setup = $('#mfa-start');
+  try {
+    const factors = await window.BSAuth.factors();
+    const verified = factors.some((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
+    status.textContent = verified
+      ? window.BSAuth.assurance() === 'aal2'
+        ? 'TOTP is verified for this session. Mailbox connections are enabled.'
+        : 'TOTP is active. Enter an authenticator code when signing in before connecting a mailbox.'
+      : 'Mailbox connections require a verified authenticator app (TOTP).';
+    setup.hidden = verified;
+    setup.disabled = false;
+  } catch (error) {
+    status.textContent = `Could not check authenticator settings: ${error.message}`;
+    setup.disabled = true;
+  }
+}
+
+async function startMfaEnrollment() {
+  const button = $('#mfa-start');
+  const message = $('#mfa-message');
+  button.disabled = true;
+  message.textContent = '';
+  try {
+    const factor = await window.BSAuth.enrollTotp();
+    if (!factor.id || !factor.totp?.secret) throw new Error('Supabase did not return an authenticator setup key.');
+    pendingMfaEnrollment = factor.id;
+    $('#mfa-secret').textContent = factor.totp.secret;
+    $('#mfa-enrollment').hidden = false;
+    $('#mfa-enrollment-code').focus();
+    message.textContent = 'Save this key in your authenticator app, then enter its current 6-digit code.';
+  } catch (error) {
+    message.textContent = `Could not start authenticator setup: ${error.message}`;
+    button.disabled = false;
+  }
+}
+
+async function verifyMfaEnrollment(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const message = $('#mfa-message');
+  const code = $('#mfa-enrollment-code').value.trim();
+  if (!pendingMfaEnrollment) {
+    message.textContent = 'Could not find the pending authenticator setup. Start setup again.';
+    return;
+  }
+  button.disabled = true;
+  try {
+    await window.BSAuth.verifyTotp(pendingMfaEnrollment, code);
+    pendingMfaEnrollment = null;
+    $('#mfa-enrollment').hidden = true;
+    $('#mfa-start').hidden = true;
+    $('#mfa-secret').textContent = '';
+    message.textContent = 'Authenticator verified. Mailbox connections are now enabled for this session.';
+    await refreshMfaStatus();
+  } catch (error) {
+    message.textContent = `Could not verify the authenticator code: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteEmailData() {
+  if (!confirm('Permanently delete your connected mailboxes, email summaries, reports, and encryption keys?')) return;
+  const message = $('#privacy-msg');
+  const button = $('#delete-email-data');
+  button.disabled = true;
+  message.textContent = 'Deleting your email data…';
+  try {
+    const token = await window.BSAuth.token();
+    const response = await fetch('/api/privacy/delete-email-data', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not delete email data');
+    message.textContent = result.warnings?.length
+      ? `Email data was deleted. ${result.warnings.join(' ')}`
+      : 'Email data was deleted.';
+  } catch (error) {
+    message.textContent = `Could not delete email data: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function cancel() {
@@ -150,9 +236,11 @@ async function page() {
 const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest?.('[data-plan],[data-int],#cx'); if (!t) return;
+  const t = e.target.closest?.('[data-plan],[data-int],#cx,#delete-email-data,#mfa-start'); if (!t) return;
   if (t.dataset.int) { INT = t.dataset.int; pricing(); }
   else if (t.dataset.plan) checkout(t.dataset.plan);
+  else if (t.id === 'delete-email-data') deleteEmailData();
+  else if (t.id === 'mfa-start') startMfaEnrollment();
   else cancel();
 });
 document.addEventListener('bs:auth', onAuth);

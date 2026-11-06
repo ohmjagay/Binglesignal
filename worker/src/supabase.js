@@ -25,6 +25,19 @@ export async function authUser(req, env) {
   return response.json();
 }
 
+export function hasSecondFactor(req) {
+  const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const encoded = token.split('.')[1];
+  if (!encoded) return false;
+  try {
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')));
+    return payload.aal === 'aal2';
+  } catch {
+    return false;
+  }
+}
+
 export async function hasProAccess(userId, env) {
   const response = await supabaseRequest(env,
     `/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=plan,status,trial_ends_at,current_period_end&limit=1`);

@@ -11,7 +11,9 @@ SUPABASE_SERVICE_ROLE_KEY=          # master key: only here, never in /public or
 
 # --- Invited email beta ---
 EMAIL_BETA_ENABLED=false
-EMAIL_TOKEN_ENCRYPTION_KEY=         # base64-encoded random 32-byte key; encrypts OAuth refresh tokens
+EMAIL_TOKEN_ENCRYPTION_KEY=         # legacy key only; keep until existing mailbox tokens have migrated
+KEK_V1=                             # base64-encoded random 32-byte key; wraps each user's data key
+KEK_CURRENT=v1                      # active KEK version identifier
 GOOGLE_CLIENT_ID=                   # OAuth client for Gmail API
 GOOGLE_CLIENT_SECRET=               # secret
 GOOGLE_EMAIL_REDIRECT_URI=          # https://your-domain/api/email/oauth/gmail/callback
@@ -19,9 +21,13 @@ MICROSOFT_CLIENT_ID=                # OAuth app registration for Microsoft Graph
 MICROSOFT_CLIENT_SECRET=            # secret
 MICROSOFT_EMAIL_REDIRECT_URI=       # https://your-domain/api/email/oauth/outlook/callback
 EMAIL_BETA_RETURN_URL=              # https://your-domain/#/email
-EMAIL_AI_ENDPOINT=                  # HTTPS OpenAI-compatible /v1/chat/completions endpoint
-EMAIL_AI_API_KEY=                   # secret; for the configured self-hosted summarizer
-EMAIL_AI_MODEL=                     # model name served by EMAIL_AI_ENDPOINT
+EMAIL_AI_PROVIDER=openai_compatible # anthropic or openai_compatible
+EMAIL_AI_ENDPOINT=                  # HTTPS OpenAI-compatible /v1/chat/completions endpoint (openai_compatible only)
+EMAIL_AI_API_KEY=                   # secret; paid provider key, never for a free email-training tier
+EMAIL_AI_MODEL=                     # provider model; Anthropic defaults to claude-haiku-5-5
+EMAIL_AI_DAILY_TOKEN_CAP=100000     # per-user daily token budget
+EMAIL_AI_MONTHLY_TOKEN_BUDGET=10000000 # global monthly token budget
+EMAIL_AI_MONTHLY_BUDGET_EXCEEDED=false # emergency switch: true forces rules-only summaries
 RESEND_API_KEY=                     # optional until email reports are enabled
 EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@your-domain>
 
@@ -29,15 +35,22 @@ EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@y
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=            # you choose it when adding the webhook https://binglesignal.com/api/webhooks/razorpay
-RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx  (Rs 99)
-RAZORPAY_PLAN_PRO_MONTHLY=          # plan_xxx  (Rs 299)
-RAZORPAY_PLAN_LITE_YEARLY=          # plan_xxx  (Rs 999)
-RAZORPAY_PLAN_PRO_YEARLY=           # plan_xxx  (Rs 2,999)
+# USD Razorpay plan IDs; international recurring payments are not used until T9.
+RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx
+RAZORPAY_PLAN_PRO_MONTHLY_USD=      # plan_xxx
+RAZORPAY_PLAN_LITE_YEARLY_USD=      # plan_xxx
+RAZORPAY_PLAN_PRO_YEARLY_USD=       # plan_xxx
+# INR Razorpay plan IDs; create plans using the amounts configured in public/config.js.
+RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx
+RAZORPAY_PLAN_PRO_MONTHLY=          # plan_xxx
+RAZORPAY_PLAN_LITE_YEARLY=          # plan_xxx
+RAZORPAY_PLAN_PRO_YEARLY=           # plan_xxx
 
 # --- Worldwide: Dodo Payments (merchant of record: handles foreign VAT/sales tax) ---
+# USD hosted checkout links; create plans using the amounts configured in public/config.js.
 GLOBAL_WEBHOOK_SECRET=              # starts with whsec_ ; webhook URL https://binglesignal.com/api/webhooks/global
-GLOBAL_LINK_LITE_MONTH=             # hosted checkout link for Lite monthly ($2.99)
-GLOBAL_LINK_PRO_MONTH=              # Pro monthly ($5.99)
-GLOBAL_LINK_LITE_YEAR=              # Lite yearly ($29)
-GLOBAL_LINK_PRO_YEAR=               # Pro yearly ($59)
+GLOBAL_LINK_LITE_MONTH=             # hosted checkout link for Lite monthly ($5)
+GLOBAL_LINK_PRO_MONTH=              # Pro monthly ($11)
+GLOBAL_LINK_LITE_YEAR=              # Lite yearly ($50)
+GLOBAL_LINK_PRO_YEAR=               # Pro yearly ($110)
 GLOBAL_LINK_PARAMS=                 # optional: how your provider wants email + user id added, default: email={email}&metadata_user_id={user_id}&metadata_plan={plan}

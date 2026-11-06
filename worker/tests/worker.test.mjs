@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import worker, { verifyRazorpay, verifyStandardWebhook, mapRazorpay, mapGlobal } from '../src/index.js';
 import { betaTestReport, handleEmailRequest, isValidBetaSchedule } from '../src/email-beta.js';
 
@@ -9,6 +11,10 @@ const env = {
   RAZORPAY_KEY_ID: 'rzp_test_1', RAZORPAY_KEY_SECRET: 'secret', RAZORPAY_WEBHOOK_SECRET: 'hooksecret',
   RAZORPAY_PLAN_PRO_MONTHLY: 'plan_pro_m', RAZORPAY_PLAN_LITE_MONTHLY: 'plan_lite_m',
   GLOBAL_WEBHOOK_SECRET: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw', GLOBAL_LINK_PRO_MONTH: 'https://pay.example.com/pro',
+  API_RATE_LIMITS: {
+    idFromName: (name) => name,
+    get: () => ({ fetch: async () => Response.json({ allowed: true }) }),
+  },
 };
 const USER = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'Ria@Example.com' };
 const parse = (s) => { try { return JSON.parse(s); } catch { return s; } };
@@ -23,10 +29,37 @@ function fakeNetwork(routes = {}) {
   return calls;
 }
 const post = (path, body, headers = {}) =>
-  new Request('https://binglesignal.com' + path, { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) });
+  new Request('https://binglesignal.com' + path, {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '203.0.113.1', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
 const rzpSig = (raw) => createHmac('sha256', env.RAZORPAY_WEBHOOK_SECRET).update(raw).digest('hex');
 const rzpEvent = (event, extra = {}) => ({ event, created_at: 1793000000, payload: { subscription: { entity: {
   id: 'sub_123', customer_id: 'cust_1', current_end: 1795600000, notes: { user_id: USER.id, plan: 'pro' }, ...extra } } } });
+
+test('Public pricing is centralized and uses the current INR and USD plan amounts', async () => {
+  const config = await readFile(new URL('../../public/config.js', import.meta.url), 'utf8');
+  const context = { window: {} };
+  runInNewContext(config, context);
+  const prices = JSON.parse(JSON.stringify(context.window.BS.prices));
+  assert.deepEqual(prices, {
+    IN: { c: '₹', lite: { month: '299', year: '2,999' }, pro: { month: '799', year: '7,999' } },
+    GL: { c: '$', lite: { month: '5', year: '50' }, pro: { month: '11', year: '110' } },
+  });
+  const premium = await readFile(new URL('../../public/premium.js', import.meta.url), 'utf8');
+  assert.match(premium, /const PRICE = BS\.prices;/);
+  assert.doesNotMatch(premium, /\$2\.99|\$5\.99|month: '99'/);
+  const vars = await readFile(new URL('../../.dev.vars.example', import.meta.url), 'utf8');
+  for (const variable of [
+    'RAZORPAY_PLAN_LITE_MONTHLY_USD',
+    'RAZORPAY_PLAN_PRO_MONTHLY_USD',
+    'RAZORPAY_PLAN_LITE_YEARLY_USD',
+    'RAZORPAY_PLAN_PRO_YEARLY_USD',
+  ]) assert.match(vars, new RegExp(`^${variable}=`, 'm'));
+  const index = await readFile(new URL('../../public/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(index, /pagead2\.googlesyndication\.com|adsbygoogle/i);
+});
 
 test('Standard Webhooks: the official test vector verifies, tampering and old messages fail', async () => {
   const h = new Headers({ 'webhook-id': 'msg_p5jXN8AQM9LWM0D4loKWxJek', 'webhook-timestamp': '1614265330',
@@ -75,6 +108,46 @@ test('Razorpay mapping: pending -> past_due, halted -> expired, cancelled -> can
 test('Checkout without login -> 401', async () => {
   fakeNetwork();
   assert.equal((await worker.fetch(post('/api/checkout', { plan: 'pro' }), env)).status, 401);
+});
+
+test('Checkout rate limiting fails closed and returns 429 when the address is over quota', async () => {
+  fakeNetwork();
+  const limited = {
+    ...env,
+    API_RATE_LIMITS: {
+      idFromName: (name) => name,
+      get: () => ({ fetch: async () => Response.json({ allowed: false }) }),
+    },
+  };
+  const response = await worker.fetch(post('/api/checkout', { plan: 'pro' }), limited);
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get('retry-after'), '600');
+});
+
+test('Payment-changing routes fail closed when rate-limit storage is unavailable', async () => {
+  fakeNetwork();
+  const noLimiter = { ...env, API_RATE_LIMITS: undefined };
+  const response = await worker.fetch(post('/api/cancel', {}, { 'cf-connecting-ip': '203.0.113.8' }), noLimiter);
+  assert.equal(response.status, 503);
+});
+
+test('Browser authentication requires a Turnstile token and the site sends no inline script', async () => {
+  const app = await readFile(new URL('../../public/app.js', import.meta.url), 'utf8');
+  const config = await readFile(new URL('../../public/config.js', import.meta.url), 'utf8');
+  const premium = await readFile(new URL('../../public/premium.js', import.meta.url), 'utf8');
+  const auth = await readFile(new URL('../src/supabase.js', import.meta.url), 'utf8');
+  const index = await readFile(new URL('../../public/index.html', import.meta.url), 'utf8');
+  const headers = await readFile(new URL('../../public/_headers', import.meta.url), 'utf8');
+  assert.match(app, /captcha_token:captchaToken/);
+  assert.match(app, /challenges\.cloudflare\.com\/turnstile\/v0\/api\.js/);
+  assert.match(app, /auth\/v1\/factors/);
+  assert.match(premium, /Set up authenticator/);
+  assert.match(auth, /payload\.aal === 'aal2'/);
+  assert.match(config, /turnstileSiteKey/);
+  assert.doesNotMatch(index, /<script type="module">\s*[\r\n]/);
+  assert.match(headers, /Strict-Transport-Security:/);
+  assert.match(headers, /X-Frame-Options: DENY/);
+  assert.match(headers, /Content-Security-Policy-Report-Only:.*frame-ancestors 'none'/);
 });
 
 test('Checkout (India): Razorpay subscription is created and the unused trial is preserved via start_at', async () => {

@@ -5,7 +5,10 @@
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
 //   POST /api/webhooks/global    international provider (Standard Webhooks format, e.g. Dodo Payments)
 // Secrets needed: see wrangler.example.toml
-import { handleEmailRequest, handleEmailSchedule } from './email-beta.js';
+import { handleDeleteEmailData, handleEmailRequest, handleEmailSchedule } from './email-beta.js';
+import { checkApiRateLimit } from './rate-limit.js';
+export { EmailAiBudget } from './llm.js';
+export { ApiRateLimits } from './rate-limit.js';
 
 const enc = new TextEncoder();
 const json = (o, status = 200) =>
@@ -188,10 +191,20 @@ export default {
       if (p === '/api/health') return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
         rails: { razorpay: !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && env.RAZORPAY_PLAN_LITE_MONTHLY && env.RAZORPAY_PLAN_PRO_MONTHLY),
                  global: !!(env.GLOBAL_LINK_LITE_MONTH && env.GLOBAL_LINK_PRO_MONTH) } });
+      if (p === '/api/privacy/delete-email-data') return await handleDeleteEmailData(req, env);
       if (p.startsWith('/api/email/')) return await handleEmailRequest(req, env);
       if (req.method !== 'POST') return json({ error: 'not found' }, 404);
-      if (p === '/api/checkout') return await handleCheckout(req, env);
-      if (p === '/api/cancel') return await handleCancel(req, env);
+      if (p === '/api/checkout' || p === '/api/cancel') {
+        const action = p === '/api/checkout' ? 'checkout' : 'cancel';
+        const limit = await checkApiRateLimit(req, env, action);
+        if (!limit.available) return json({ error: 'Rate limiting is temporarily unavailable; please try again shortly' }, 503);
+        if (!limit.allowed) return new Response(JSON.stringify({ error: 'Too many requests; please try again later' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': action === 'checkout' ? '600' : '3600' },
+        });
+        if (action === 'checkout') return await handleCheckout(req, env);
+        return await handleCancel(req, env);
+      }
       if (p === '/api/webhooks/razorpay') return await handleRazorpay(req, env);
       if (p === '/api/webhooks/global') return await handleGlobal(req, env);
       return json({ error: 'not found' }, 404);
