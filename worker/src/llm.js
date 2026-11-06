@@ -1,10 +1,10 @@
 const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-5-5';
-const MAX_OUTPUT_TOKENS = 700;
+const MAX_OUTPUT_TOKENS = 2048;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAY_MS = 250;
 const SUMMARY_SCHEMA = {
   type: 'object',
-  properties: { summary: { type: 'string', maxLength: 4000 } },
+  properties: { summary: { type: 'string', maxLength: 20000 } },
   required: ['summary'],
   additionalProperties: false,
 };
@@ -59,7 +59,7 @@ function rulesOnlySummary(input) {
     const subject = String(typeof message === 'string' ? 'Email summary' : message?.subject || 'Email')
       .replace(/\s+/g, ' ').slice(0, 140);
     const text = String(typeof message === 'string' ? message : message?.summary || message?.text || '')
-      .replace(/https?:\/\/\S+|www\.\S+/gi, '[link removed]')
+      .replace(/https?:\/\/[^\s"'<>]+|www\.[^\s"'<>]+/gi, '[link removed]')
       .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
     return `- ${subject}${text ? `: ${text}` : ''}`;
   });
@@ -69,14 +69,14 @@ function rulesOnlySummary(input) {
 function plainText(value) {
   return value
     .replace(/\[([^\]]{1,200})\]\((?:https?:\/\/|www\.)[^)]*\)/gi, '$1')
-    .replace(/https?:\/\/\S+|www\.\S+/gi, '[link removed]')
+    .replace(/https?:\/\/[^\s"'<>]+|www\.[^\s"'<>]+/gi, '[link removed]')
     .replace(/<[^>]*>/g, ' ')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/ +([.,!?;:])/g, '$1')
     .replace(/[ \t]+\n/g, '\n')
     .trim()
-    .slice(0, 4000);
+    .slice(0, 20000);
 }
 
 function parseSummary(content) {

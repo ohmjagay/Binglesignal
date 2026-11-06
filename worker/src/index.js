@@ -6,6 +6,8 @@
 //   POST /api/webhooks/global    international provider (Standard Webhooks format, e.g. Dodo Payments)
 // Secrets needed: see wrangler.example.toml
 import { handleDeleteEmailData, handleEmailRequest, handleEmailSchedule } from './email-beta.js';
+import { handleForwardEmail } from './forward.js';
+import { handleBriefingRequest, handleEditionSchedule } from './briefing.js';
 import { checkApiRateLimit } from './rate-limit.js';
 export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
@@ -185,12 +187,18 @@ async function handleCancel(req, env) {
 }
 
 export default {
+  async email(message, env) {
+    await handleForwardEmail(message, env);
+  },
   async fetch(req, env) {
     const p = new URL(req.url).pathname;
     try {
       if (p === '/api/health') return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
         rails: { razorpay: !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && env.RAZORPAY_PLAN_LITE_MONTHLY && env.RAZORPAY_PLAN_PRO_MONTHLY),
                  global: !!(env.GLOBAL_LINK_LITE_MONTH && env.GLOBAL_LINK_PRO_MONTH) } });
+      if (p === '/api/pool' || p === '/api/edition/latest' || p === '/api/feedback') {
+        return await handleBriefingRequest(req, env);
+      }
       if (p === '/api/privacy/delete-email-data') return await handleDeleteEmailData(req, env);
       if (p.startsWith('/api/email/')) return await handleEmailRequest(req, env);
       if (req.method !== 'POST') return json({ error: 'not found' }, 404);
@@ -214,6 +222,8 @@ export default {
     }
   },
   scheduled(controller, env, ctx) {
-    ctx.waitUntil(handleEmailSchedule(controller.cron, env));
+    const jobs = [handleEmailSchedule(controller.cron, env)];
+    if (controller.cron === '*/15 * * * *') jobs.push(handleEditionSchedule(env));
+    ctx.waitUntil(Promise.all(jobs));
   },
 };

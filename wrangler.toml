@@ -7,6 +7,9 @@ compatibility_date = "2025-10-01"
 directory = "./public"
 run_worker_first = ["/api/*"]
 
+[ai]
+binding = "AI"
+
 [triggers]
 # JOB_CRON = '* * * * *' in worker/src/email-beta.js drives email job processing; keep this trigger aligned.
 crons = ["0 */6 * * *", "* * * * *", "*/15 * * * *"]

@@ -11,6 +11,10 @@ SUPABASE_SERVICE_ROLE_KEY=          # master key: only here, never in /public or
 
 # --- Invited email beta ---
 EMAIL_BETA_ENABLED=false
+EMAIL_FORWARD_DOMAIN=in.binglesignal.com
+CF_ZONE_ID=
+CF_EMAIL_ROUTING_TOKEN=
+CF_EMAIL_WORKER_NAME=
 EMAIL_TOKEN_ENCRYPTION_KEY=         # legacy key only; keep until existing mailbox tokens have migrated
 KEK_V1=                             # base64-encoded random 32-byte key; wraps each user's data key
 KEK_CURRENT=v1                      # active KEK version identifier

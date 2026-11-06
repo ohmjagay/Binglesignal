@@ -21,6 +21,34 @@ const testBudget = {
   }),
 };
 
+function emailAiResponse(init) {
+  const request = JSON.parse(init.body);
+  const content = JSON.parse(request.messages[1].content);
+  if (Array.isArray(content) && content.every((item) => item && typeof item === 'object' && 'id' in item)) {
+    const results = content.map((email) => ({
+      id: email.id,
+      category: 'needs_action',
+      priority_hint: 50,
+      one_line: `Review ${email.subject}`,
+      summary: 'The selected message asks for a project review.',
+      ask: null,
+      deadline_iso: null,
+      amount: null,
+      needs_reply: false,
+      urgent: false,
+      confidence: 0.9,
+    }));
+    return Response.json({
+      choices: [{ message: { content: JSON.stringify({ summary: JSON.stringify(results) }) } }],
+      usage: { prompt_tokens: 80, completion_tokens: 12 },
+    });
+  }
+  return Response.json({
+    choices: [{ message: { content: '{"summary":"Merged selected email summaries."}' } }],
+    usage: { prompt_tokens: 80, completion_tokens: 12 },
+  });
+}
+
 function fakeFetch(routes) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -221,6 +249,7 @@ test('OAuth callback rejects a browser nonce mismatch and scopes state deletion'
 test('Privacy deletion removes only the signed-in user email data and warns about Microsoft revocation', async () => {
   const calls = fakeFetch({
     '/auth/v1/user': () => Response.json(user),
+    [`/rest/v1/email_forward_addresses?user_id=eq.${user.id}`]: () => Response.json([{ local_part: 'a'.repeat(48) }]),
     [`/rest/v1/email_connections?user_id=eq.${user.id}&select=id`]: () => Response.json([
       { id: 'connection-b', user_id: user.id, provider: 'outlook', encrypted_refresh_token: 'unused' },
     ]),
@@ -230,9 +259,10 @@ test('Privacy deletion removes only the signed-in user email data and warns abou
   assert.equal(response.status, 200);
   assert.equal(result.ok, true);
   assert.match(result.warnings.join(' '), /Microsoft does not offer a per-refresh-token revoke endpoint/);
+  assert.match(result.warnings.join(' '), /Cloudflare forwarding route could not be removed/);
   const deletions = calls.filter((call) => call.init.method === 'DELETE');
   assert.deepEqual(deletions.map((call) => new URL(call.url).pathname.split('/').pop()).sort(), [
-    'email_beta_users', 'email_connections', 'email_jobs', 'email_oauth_states',
+    'email_beta_users', 'email_connections', 'email_forward_addresses', 'email_forward_messages', 'email_jobs', 'email_oauth_states',
     'email_reports', 'email_seen_messages', 'email_summary_jobs', 'user_keys',
   ]);
   assert.ok(deletions.every((call) => call.url.includes(`user_id=eq.${user.id}`)));
@@ -463,10 +493,10 @@ test('The every-minute cron claims queued beta sync and summary jobs', async () 
 
   const claim = calls.find((call) => call.url.includes('/rest/v1/rpc/claim_email_beta_jobs'));
   assert.equal(claim.init.method, 'POST');
-  assert.deepEqual(claim.body, { batch_limit: 5 });
+  assert.deepEqual(claim.body, { batch_limit: 1 });
   const summaryClaim = calls.find((call) => call.url.includes('/rest/v1/rpc/claim_email_summary_jobs'));
   assert.equal(summaryClaim.init.method, 'POST');
-  assert.deepEqual(summaryClaim.body, { batch_limit: 3 });
+  assert.deepEqual(summaryClaim.body, { batch_limit: 1 });
 });
 
 test('Summary worker fetches selected Gmail content transiently and stores only the generated summary', async () => {
@@ -499,6 +529,14 @@ test('Summary worker fetches selected Gmail content transiently and stores only 
     '/rest/v1/subscriptions?': () => Response.json([{ plan: 'pro', status: 'active' }]),
     'oauth2.googleapis.com/token': () => Response.json({ access_token: 'mail-access-token' }),
     'gmail.googleapis.com/gmail/v1/users/me/messages?': () => Response.json({ messages: [{ id: 'message-id' }] }),
+    'gmail.googleapis.com/gmail/v1/users/me/messages/message-id?format=metadata': () => Response.json({
+      labelIds: ['INBOX'],
+      payload: { headers: [
+        { name: 'Subject', value: 'Project update' },
+        { name: 'From', value: 'team@example.com' },
+        { name: 'To', value: user.email },
+      ] },
+    }),
     'gmail.googleapis.com/gmail/v1/users/me/messages/message-id?format=full': () => Response.json({
       payload: {
         mimeType: 'text/plain',
@@ -508,10 +546,7 @@ test('Summary worker fetches selected Gmail content transiently and stores only 
     }),
     'ai.example/v1/chat/completions': (_url, init) => {
       aiRequests.push(JSON.parse(init.body));
-      return Response.json({
-        choices: [{ message: { content: '{"summary":"One message: delivery is due Friday."}' } }],
-        usage: { prompt_tokens: 80, completion_tokens: 12 },
-      });
+      return emailAiResponse(init);
     },
     '/rest/v1/rpc/advance_email_summary_job': () => Response.json([{ id: 'summary-job', status: 'completed' }]),
     '/rest/v1/email_summary_jobs?status=in.': () => new Response(null, { status: 204 }),
@@ -528,6 +563,7 @@ test('Summary worker fetches selected Gmail content transiently and stores only 
     EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
     EMAIL_AI_API_KEY: 'ai-key',
     EMAIL_AI_MODEL: 'test-model',
+    AI: { run: async (_model, input) => ({ data: input.text.map(() => [1, 0]) }) },
   });
 
   assert.ok(aiRequests.some((request) => request.messages[1].content.includes(emailText)));
@@ -546,7 +582,7 @@ test('Summary worker reads Outlook inbox text only for the selected summary job'
   const encryptedRefreshToken = await encryptTokenForTest('outlook-refresh-token', rawKey);
   const wrapped = await wrappedUserKey();
   const emailText = 'Synthetic Outlook content: review the draft next week.';
-  let graphRequest;
+  const graphRequests = [];
   const calls = fakeFetch({
     '/rest/v1/rpc/claim_email_beta_jobs': () => Response.json([]),
     '/rest/v1/rpc/claim_email_summary_jobs': () => Response.json([{
@@ -571,18 +607,20 @@ test('Summary worker reads Outlook inbox text only for the selected summary job'
     '/rest/v1/subscriptions?': () => Response.json([{ plan: 'pro', status: 'active' }]),
     '/common/oauth2/v2.0/token': () => Response.json({ access_token: 'graph-access-token' }),
     'graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?': (url, init) => {
-      graphRequest = { url, headers: init.headers };
+      graphRequests.push({ url, headers: init.headers });
       return Response.json({ value: [{
+        id: 'outlook-message-id',
         subject: 'Draft review',
         from: { emailAddress: { address: 'team@example.com' } },
+        toRecipients: [{ emailAddress: { address: user.email } }],
         receivedDateTime: '2026-11-03T08:00:00Z',
-        body: { content: emailText },
       }] });
     },
-    'ai.example/v1/chat/completions': () => Response.json({
-      choices: [{ message: { content: '{"summary":"Review the draft next week."}' } }],
-      usage: { prompt_tokens: 80, completion_tokens: 12 },
-    }),
+    'graph.microsoft.com/v1.0/me/messages/outlook-message-id?': (url, init) => {
+      graphRequests.push({ url, headers: init.headers });
+      return Response.json({ body: { contentType: 'text', content: emailText } });
+    },
+    'ai.example/v1/chat/completions': (_url, init) => emailAiResponse(init),
     '/rest/v1/rpc/advance_email_summary_job': () => Response.json([{ id: 'summary-job', status: 'completed' }]),
     '/rest/v1/email_summary_jobs?status=in.': () => new Response(null, { status: 204 }),
   });
@@ -598,10 +636,13 @@ test('Summary worker reads Outlook inbox text only for the selected summary job'
     EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
     EMAIL_AI_API_KEY: 'ai-key',
     EMAIL_AI_MODEL: 'test-model',
+    AI: { run: async (_model, input) => ({ data: input.text.map(() => [1, 0]) }) },
   });
 
-  assert.match(graphRequest.url, /%24select=id%2Csubject%2Cfrom%2CreceivedDateTime%2Cbody/);
-  assert.equal(graphRequest.headers.Prefer, 'outlook.body-content-type="text"');
+  const graphListRequest = graphRequests[0];
+  assert.match(graphListRequest.url, /%24select=id%2Csubject%2Cfrom%2CtoRecipients%2CccRecipients%2CreceivedDateTime/);
+  assert.doesNotMatch(graphListRequest.url, /body/);
+  assert.equal(graphRequests.some((request) => request.headers.Prefer === 'outlook.body-content-type="text"'), true);
   const aiRequest = calls.find((call) => call.url.includes('ai.example/v1/chat/completions'));
   assert.match(aiRequest.body.messages[1].content, new RegExp(emailText));
 });

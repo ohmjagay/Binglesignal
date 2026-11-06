@@ -239,12 +239,27 @@ async function renderEmailBeta(){
  clearInterval(window.emailSummaryPoll);
  const notice=params.get('email_connected')?'Mailbox connected. You can now request an inbox summary.':params.get('email_error')?'Mailbox connection did not complete. Please try again.':'';
  box.innerHTML=`<section class="sum"><div class="eyebrow">Pro · invited beta</div><h1 class="serif">Email briefing</h1><p class="tag">Choose which inbox messages to summarize, or preview a clearly labeled synthetic report. Each run is limited to 500 messages per user-local day.</p></section><div class="email-beta"><section class="card"><h2 class="serif">Connect your mailbox</h2><p>Connecting requires read-only permission to access message content for summaries. Gmail's <code>gmail.readonly</code> and Microsoft's <code>Mail.Read</code> grant this access. Google may require OAuth verification and a security assessment. If you already connected before this permission change, connect again and approve the updated permission.</p><p><b>What BingleSignal reads:</b> the sender, subject and text of messages you choose to summarize, read-only. <b>What we never do:</b> send, delete, move or label your email; sell your data; show ads; or use your email to train AI models. Message text is sent to the configured AI provider only to produce your summary, then discarded. We store the summary encrypted for up to 30 days. Delete everything from Account → Privacy.</p><label class="email-consent"><input id="email-consent" type="checkbox"> I understand and agree to this processing.</label><div class="email-actions"><button class="btn" data-email-action="connect" data-provider="gmail">Connect Gmail</button><button class="btn" data-email-action="connect" data-provider="outlook">Connect Outlook</button><button class="btn" data-email-action="preview">Create a synthetic test report</button></div><p id="email-message" class="email-message" aria-live="polite">${esc(notice)}</p></section><section class="card"><h2 class="serif">Your connections</h2><div id="email-connections" class="email-connections">Loading…</div></section><section class="card"><h2 class="serif">Summarize inbox emails</h2><p>Choose inbox messages (up to the daily limit, newest first), the latest 50 messages, or a date range of up to 31 calendar days. At most 500 messages are processed per account per local day. Message text is temporarily sent to the configured AI endpoint for summarization; BingleSignal stores encrypted summaries and processing status, not message bodies.</p><form id="email-summary-form" class="email-settings"><label>Mailbox<select id="email-summary-connection" required></select></label><label>Messages<select id="email-summary-mode"><option value="all">Inbox messages (up to daily limit)</option><option value="latest50">Latest 50</option><option value="date_range">Date range</option></select></label><label id="email-date-from-wrap" hidden>From<input id="email-date-from" type="date"></label><label id="email-date-to-wrap" hidden>To<input id="email-date-to" type="date"></label><label class="email-consent"><input id="email-content-consent" type="checkbox"> I consent to send selected message content to the configured AI summarizer and store its encrypted summary in my reports.</label><button class="btn fill" type="submit">Generate email summary</button></form></section><section class="card"><h2 class="serif">Summary jobs</h2><div id="email-summary-jobs">Loading…</div></section><section class="card"><h2 class="serif">Scheduled roll-up</h2><p>Every 100 new messages detected creates a synthetic report. Scheduled roll-ups remain synthetic in this beta.</p><form id="email-settings" class="email-settings"><label>Time zone<input id="email-timezone" required value="${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Kolkata')}"></label><label>Report time<input id="email-time" type="time" step="900" required value="07:00"></label><button class="btn fill" type="submit">Save schedule</button></form></section><section class="card"><h2 class="serif">Recent reports</h2><div id="email-reports" class="email-reports">Loading…</div></section></div>`;
+ box.insertAdjacentHTML('afterbegin',`<section class="card"><h2 class="serif">Forward to your private brief</h2><p>Forward only the messages you choose. BingleSignal does not connect to your mailbox in this mode.</p><ol><li><b>Create your private address</b><p><code id="forward-address">Not created yet</code></p><button class="btn" data-forward-action="create-address">Create my private address</button></li><li><b>Add a Gmail or Outlook filter</b><pre id="forward-instructions">Gmail: Settings → See all settings → Forwarding and POP/IMAP → Add a forwarding address. Paste the private address above and enter the one-time code below. Then open Filters and Blocked Addresses → Create a new filter. Set criteria for the mail you choose (for example category:promotions OR category:social OR category:updates), select Forward it to, and save.\n\nOutlook: Settings → Mail → Rules → Add new rule. Choose the senders or conditions you want, add the action Forward to, paste the private address above, and save. Some work accounts block forwarding outside your organization.</pre><button class="btn" data-forward-action="copy-instructions">Copy filter instructions</button><button class="btn" data-forward-action="show-code">Show Gmail confirmation code once</button><p id="forward-code" class="email-message" role="status"></p></li><li><b>Done: your first brief is saved below.</b><p>Daily email delivery at your chosen time will be enabled in the Delivery setup. Until then, forwarded briefs appear here.</p></li></ol><div id="forward-reports" class="email-reports">No forwarded briefs yet.</div></section>`);
  const message=$('#email-message');
  const renderJobs=jobs=>{
   $('#email-summary-jobs').innerHTML=jobs.length?jobs.map(job=>`<article class="email-report"><div class="eyebrow">${esc(job.status)} · ${esc(job.mode)}</div>${job.report?`<h3>${esc(job.report.title)}</h3><pre class="email-summary-text">${esc(job.report.summary)}</pre><small>${job.processed_count} emails summarized · ${esc(new Date(job.updated_at).toLocaleString())}</small>`:`<p>${job.status==='failed'?esc(job.error||'Summary failed. Please try again.'):`Processed ${job.processed_count} of up to ${job.max_messages} emails.`}</p>`}</article>`).join(''):'<p>No inbox summaries yet.</p>';
  };
  const load=async()=>{
-  const [data,summaryData]=await Promise.all([emailApi('/api/email/settings'),emailApi('/api/email/summaries')]);
+  const [data,summaryData,addressData,forwardData]=await Promise.all([
+   emailApi('/api/email/settings'),emailApi('/api/email/summaries'),
+   emailApi('/api/email/forward/address'),emailApi('/api/email/forward/reports')
+  ]);
+  box.querySelector('.sum .eyebrow').textContent=data.beta_enabled?'Pro · invited beta':'Lite + Pro · private forwarding';
+  box.querySelector('.sum .tag').textContent=data.beta_enabled
+   ?'Choose forwarded messages, or use the invited read-only mailbox beta. Each run is limited to 500 messages per user-local day.'
+   :'Forward only the messages you choose; no mailbox connection is needed.';
+  for(const section of box.querySelectorAll('section.card')){
+   const heading=section.querySelector('h2')?.textContent;
+   if(['Connect your mailbox','Summarize inbox emails','Summary jobs','Scheduled roll-up'].includes(heading))section.hidden=!data.beta_enabled;
+  }
+  $('#forward-address').textContent=addressData.address||'Not created yet';
+  $('[data-forward-action="create-address"]').hidden=Boolean(addressData.address);
+  $('#forward-reports').innerHTML=forwardData.reports.length?forwardData.reports.map(item=>`<article class="email-report"><div class="eyebrow">Forwarded brief · ${esc(new Date(item.created_at).toLocaleString())}</div><h3>${esc(item.report.title)}</h3><pre class="email-summary-text">${esc(item.report.summary)}</pre></article>`).join(''):'<p>No forwarded briefs yet. They will appear here after you add a filter.</p>';
   $('#email-timezone').value=data.settings.timezone;
   $('#email-time').value=data.settings.digest_time;
   $('#email-connections').innerHTML=data.connections.length?data.connections.map(c=>`<div class="email-connection"><div><b>${esc(c.provider)}</b> · ${esc(c.provider_email)}<small>${c.status==='needs_reconnect'?'Reconnect required · ':''}Last sync: ${c.last_sync_at?esc(new Date(c.last_sync_at).toLocaleString()):'pending'}${c.last_error?' · '+esc(c.last_error):''}</small></div><button class="link" data-email-action="disconnect" data-provider="${esc(c.provider)}">Disconnect</button></div>`).join(''):'<p>No mailboxes connected.</p>';
@@ -264,6 +279,27 @@ async function renderEmailBeta(){
   $('#email-date-to').required=show;
  };
  box.onclick=async(event)=>{
+  const forwardButton=event.target.closest('[data-forward-action]');
+  if(forwardButton){
+   forwardButton.disabled=true;message.textContent='';
+   try{
+    if(forwardButton.dataset.forwardAction==='create-address'){
+     const result=await emailApi('/api/email/forward/address','POST',{});
+     $('#forward-address').textContent=result.address;
+     forwardButton.hidden=true;
+    }else if(forwardButton.dataset.forwardAction==='copy-instructions'){
+     await navigator.clipboard.writeText($('#forward-instructions').textContent);
+     message.textContent='Filter instructions copied.';
+    }else if(forwardButton.dataset.forwardAction==='show-code'){
+     const result=await emailApi('/api/email/forward/confirmation-code','POST',{});
+     $('#forward-code').textContent=`Gmail forwarding confirmation code: ${result.code}`;
+     forwardButton.hidden=true;
+    }
+    if(forwardButton.dataset.forwardAction!=='copy-instructions')await load();
+   }catch(error){message.textContent=error.message}
+   finally{forwardButton.disabled=false}
+   return
+  }
   const button=event.target.closest('[data-email-action]');if(!button)return;
   const action=button.dataset.emailAction;button.disabled=true;message.textContent='';
   try{
