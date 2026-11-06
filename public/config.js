@@ -9,7 +9,7 @@ window.BS={
  
  supabaseUrl:'https://bpgstmqbbvvlibgcssvq.supabase.co',
  supabaseKey:'sb_publishable_A6eZtpdfkTkpID-kwzpW5w_edwnLOxa', // public "publishable" key: safe to publish. NEVER paste a service_role key here.
- turnstileSiteKey:'', // public Cloudflare Turnstile site key; set after adding CAPTCHA in Supabase Auth.
+ turnstileSiteKey:'0x4AAAAAAF1xufF2REJahy8J', // public Cloudflare Turnstile site key; set after adding CAPTCHA in Supabase Auth.
  readCap:200,  // stories in READ
  watchCap:30,  // videos in WATCH
  company:'BingleSignal',
