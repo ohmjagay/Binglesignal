@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Trust &amp; Data Handling - BingleSignal</title>
+  <meta name="theme-color" content="#07111F">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top"><div class="wrap bar">
+    <a class="brand serif" href="/"><span>Bingle<em>Signal</em></span></a>
+    <a class="link" href="/">Back to the briefing</a>
+  </div></header>
+  <main class="legal">
+    <h1 class="serif">Trust &amp; data handling</h1>
+    <p>BingleSignal is built to help you understand your selected email and news briefings without selling your data or showing third-party ads.</p>
+
+    <h2>Email data lifecycle</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Where and protection</th><th>Retention and deletion</th></tr></thead>
+        <tbody>
+          <tr><td>Raw email text</td><td>Memory only while the requested summary is processed.</td><td>Discarded after processing; not stored as a raw message.</td></tr>
+          <tr><td>Generated email summary</td><td>Stored in Supabase encrypted with a per-user data key.</td><td>Kept for up to 30 days; deleted with its email data or account.</td></tr>
+          <tr><td>Mailbox refresh token</td><td>Stored in Supabase encrypted with a per-user data key.</td><td>Kept until disconnect or account deletion.</td></tr>
+          <tr><td>Message IDs for duplicate detection</td><td>Stored server-side as opaque identifiers.</td><td>Expired automatically; deleting email data removes them immediately.</td></tr>
+          <tr><td>Private forwarding address</td><td>Stored server-side and not published as a public profile field.</td><td>Kept while the account exists; removed when the account is deleted.</td></tr>
+          <tr><td>Billing records</td><td>Held by the selected payment provider; BingleSignal stores subscription status and plan details.</td><td>Retained as required by payment, accounting, and tax laws.</td></tr>
+          <tr><td>Operational logs</td><td>Cloudflare and configured providers; email bodies, subjects, and senders are not logged.</td><td>Provider retention settings apply.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Email summarizer: what happens</h2>
+    <p>Email summaries read the messages you select, send their text to the configured AI provider to generate a summary, and store only the encrypted summary. Raw message text is not stored. Email is read-only: BingleSignal does not send, delete, move, label, or unsubscribe from your messages.</p>
+    <p>You can disconnect a mailbox or delete email data from Account → Privacy. You can also revoke access in your Google or Microsoft account.</p>
+
+    <h2>Sub-processors</h2>
+    <ul>
+      <li><b>Cloudflare:</b> website and Worker hosting, security, and inbound email processing when forwarding is configured.</li>
+      <li><b>Supabase:</b> account sign-in and database storage.</li>
+      <li><b>Google and Microsoft:</b> sign-in and mailbox access only when you choose those features.</li>
+      <li><b>Configured AI provider:</b> processes selected email text only to produce the summary you request.</li>
+      <li><b>Resend or Amazon SES:</b> sends briefings only after delivery is configured and enabled.</li>
+      <li><b>Telegram:</b> receives a briefing only when you link a Telegram account.</li>
+      <li><b>Razorpay or the configured international payment provider:</b> processes payments and retains required billing records.</li>
+      <li><b>GitHub:</b> runs public-news feed updates; it does not receive mailbox data.</li>
+    </ul>
+
+    <h2>Google API data</h2>
+    <p>BingleSignal's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements.</p>
+
+    <h2>Contact</h2>
+    <p>For privacy or security questions, email <a href="mailto:support@binglesignal.com">support@binglesignal.com</a>. See the <a href="/privacy">Privacy Policy</a>.</p>
+  </main>
+  <footer><div class="wrap">&copy; BingleSignal · <a href="/privacy">Privacy</a> · <a href="/contact">Contact</a></div></footer>
+</body>
+</html>

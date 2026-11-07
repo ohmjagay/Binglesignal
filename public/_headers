@@ -15,5 +15,3 @@
   Cache-Control: no-cache
 /feed.json
   Cache-Control: public, max-age=300, stale-while-revalidate=600
-/pool.json
-  Cache-Control: public, max-age=300, stale-while-revalidate=600

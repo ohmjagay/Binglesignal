@@ -1,6 +1,7 @@
 const WINDOW_LIMITS = Object.freeze({
   checkout: { limit: 5, windowMs: 10 * 60 * 1000 },
   cancel: { limit: 3, windowMs: 60 * 60 * 1000 },
+  plan_switch: { limit: 5, windowMs: 60 * 60 * 1000 },
 });
 
 export async function checkApiRateLimit(req, env, action) {

@@ -9,7 +9,7 @@ const FEATS = {
   lite: [['Finite daily edition, all topics and regions', 1], ['READ list of 40 stories and WATCH list of 8 videos', 1], ['Original source and source count on stories', 1], ['"Why it matters" line on top stories', 0], ['30-day archive search', 0]],
   pro: [['Everything in Lite', 1], ['Endless mix: READ list of 200 and WATCH list of 30', 1], ['Watchlist alerts', 0], ['Meeting prep packs', 0], ['3 Deep Dives a month', 0], ['365-day archive search', 0]],
 };
-let ACC = null, ENVI = null, INT = 'month', busy = false, pendingMfaEnrollment = null;
+let ACC = null, ENVI = null, INT = 'month', CUR = null, busy = false, pendingMfaEnrollment = null;
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
 const authed = () => !!window.BSAuth?.has?.();
@@ -65,27 +65,44 @@ function frame(inner) {
 }
 
 async function pricing() {
-  const e = await env(), R = region(e), rail = R === 'IN' ? e.rails.razorpay : e.rails.global, P = PRICE[R];
+  const e = await env(), localRegion = region(e), R = CUR || localRegion;
+  const rail = R === 'IN' ? e.rails.razorpay : e.rails.global, P = PRICE[R];
   const mine = ACC?.status === 'active' ? ACC.plan : null;
   const card = (id, name, blurb, tag) => {
     const per = INT === 'year' ? '/yr' : '/mo'; let cta;
+    const switching = ACC?.status === 'active' && mine && mine !== id;
     if (!authed()) cta = '<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Pro features for 7 days, then choose a plan.</small>';
     else if (mine === id) cta = '<button class="btn wide" disabled>Your current plan</button>';
     else if (!rail) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running. We will email you before it ends.</small>';
-    else cta = `<button class="btn fill wide" data-plan="${id}">Choose ${name}</button>`;
-    return `<article class="card plan${id === 'pro' ? ' hot' : ''}"><div class="eyebrow">${tag}</div><h2 class="serif">${name}</h2><p class="mu">${blurb}</p><div class="price"><span>${P.c}</span><b>${P[id][INT]}</b><small>${per}</small></div><ul>${FEATS[id].map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
+    else cta = `<button class="btn fill wide" data-plan="${id}">${switching ? `Switch to ${name}` : `Choose ${name}`}</button>`;
+    return `<article class="card plan${id === 'pro' ? ' hot' : ''}"><div class="eyebrow">${tag}</div><h2 class="serif">${name}</h2><p class="mu">${blurb}</p><div class="price"><span>${P.c}</span><b>${P[id][INT]}</b><small>${per}</small></div><ul>${FEATS[id].map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${R === 'IN' && authed() ? '<label class="gstin-field">GSTIN for an Indian business invoice (optional)<input id="gstin" maxlength="15" autocomplete="off" placeholder="15-character GSTIN"></label>' : ''}${cta}</article>`;
   };
-  frame(`<section class="pxh"><h1 class="serif">Pick the depth that fits your day</h1><p class="tag">Every plan starts with a 7-day Pro trial. No card needed. Cancel any time.</p><div class="tog" role="group" aria-label="Billing period"><button data-int="month" class="${INT === 'month' ? 'on' : ''}">Monthly</button><button data-int="year" class="${INT === 'year' ? 'on' : ''}">Yearly · 2 months free</button></div></section><div class="plans">${card('lite', 'Lite', 'The finite daily briefing for professionals.', 'Signal Desk')}${card('pro', 'Pro', 'The endless mix, plus tools for people who act on news.', 'Daily Mix')}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">Prices in ${R === 'IN' ? 'Indian rupees' : 'US dollars'}; applicable taxes are shown at checkout. Features marked <i>soon</i> are being built and join your plan at no extra cost. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+  const currencyToggle = localRegion === 'IN'
+    ? `<div class="tog" role="group" aria-label="Billing currency"><button data-currency="IN" class="${R === 'IN' ? 'on' : ''}">INR</button><button data-currency="GL" class="${R === 'GL' ? 'on' : ''}">USD</button></div>`
+    : '';
+  frame(`<section class="pxh"><h1 class="serif">Pick the depth that fits your day</h1><p class="tag">Every plan starts with a 7-day Pro trial. No card needed. Cancel any time.</p>${currencyToggle}<div class="tog" role="group" aria-label="Billing period"><button data-int="month" class="${INT === 'month' ? 'on' : ''}">Monthly</button><button data-int="year" class="${INT === 'year' ? 'on' : ''}">Yearly · 2 months free</button></div></section><div class="plans">${card('lite', 'Lite', 'The finite daily briefing for professionals.', 'Signal Desk')}${card('pro', 'Pro', 'The endless mix, plus tools for people who act on news.', 'Daily Mix')}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">Prices in ${R === 'IN' ? 'Indian rupees' : 'US dollars'}; applicable taxes are shown at checkout. Features marked <i>soon</i> are being built and join your plan at no extra cost. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
 
 async function checkout(plan) {
   if (busy) return; busy = true; let opened = false;
   const msg = (t) => { const m = $('#pxmsg'); if (m) m.textContent = t; };
   try {
-    const e = await env(), R = region(e), t = await window.BSAuth.token();
-    const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify({ plan, interval: INT, region: R === 'IN' ? 'IN' : 'GLOBAL' }) });
+    const e = await env(), R = CUR || region(e), t = await window.BSAuth.token();
+    const gstin = R === 'IN' ? $('#gstin')?.value?.trim() || '' : '';
+    const switching = ACC?.status === 'active' && ACC.plan && ACC.plan !== plan;
+    const endpoint = switching ? '/api/plan/switch' : '/api/checkout';
+    const payload = switching
+      ? { plan, apply_at: plan === 'pro' ? 'now' : 'cycle_end' }
+      : { plan, interval: INT, currency: R === 'IN' ? 'INR' : 'USD', gstin };
+    const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(payload) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'checkout failed');
+    if (switching) {
+      msg(j.scheduled_for === 'now' ? 'Your Pro upgrade is being applied now.' : 'Your plan change is scheduled for the end of this billing period.');
+      await loadAccess();
+      busy = false;
+      return;
+    }
     if (j.provider === 'global') { opened = true; location.href = j.url; return; }
     await loadScript('https://checkout.razorpay.com/v1/checkout.js');
     new window.Razorpay({ key: j.key_id, subscription_id: j.subscription_id, name: 'BingleSignal', description: (plan === 'pro' ? 'Pro' : 'Lite') + ' plan', prefill: { email: window.BSAuth.user()?.email || '' }, theme: { color: '#D4B46A' }, handler: () => { activating(); }, modal: { ondismiss: () => { busy = false; } } }).open();
@@ -108,6 +125,21 @@ async function paused() {
   frame(`<section class="pxh"><h1 class="serif">Your briefing is paused</h1><p class="tag">Your 7-day trial has ended. Your settings are saved. Choose a plan to pick up where you left off.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
 }
 
+async function loadUsageMetrics() {
+  const output = $('#time-saved');
+  if (!output) return;
+  try {
+    const token = await window.BSAuth.token();
+    const response = await fetch('/api/metrics', { headers: { authorization: 'Bearer ' + token } });
+    if (!response.ok) throw Object.assign(new Error(), { statusCode: response.status });
+    const metrics = (await response.json()).metrics || {};
+    output.textContent = `You've completed ${Number(metrics.completed_editions) || 0} briefings and saved about ${Number(metrics.time_saved_minutes) || 0} minutes. Estimate: 3 minutes per completed briefing.`;
+  } catch (error) {
+    output.textContent = 'Your usage estimate is unavailable right now.';
+    console.warn('Usage metrics could not be loaded', { status_code: error.statusCode || 0 });
+  }
+}
+
 async function account() {
   if (!authed()) { location.hash = '#/me/read'; return; }
   await acc.ready; const a = ACC;
@@ -119,8 +151,9 @@ async function account() {
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
     body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p><a class="btn" href="#/pricing">${a.status === 'active' ? 'Change plan' : 'Choose a plan'}</a> ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
-  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Account security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
+  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">Loading your estimate…</p></section><section class="card"><h2 class="serif">Account security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
   await refreshMfaStatus();
+  await loadUsageMetrics();
   $('#mfa-enrollment-form').onsubmit = verifyMfaEnrollment;
 }
 
@@ -236,8 +269,9 @@ async function page() {
 const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest?.('[data-plan],[data-int],#cx,#delete-email-data,#mfa-start'); if (!t) return;
+  const t = e.target.closest?.('[data-plan],[data-int],[data-currency],#cx,#delete-email-data,#mfa-start'); if (!t) return;
   if (t.dataset.int) { INT = t.dataset.int; pricing(); }
+  else if (t.dataset.currency) { CUR = t.dataset.currency; pricing(); }
   else if (t.dataset.plan) checkout(t.dataset.plan);
   else if (t.id === 'delete-email-data') deleteEmailData();
   else if (t.id === 'mfa-start') startMfaEnrollment();

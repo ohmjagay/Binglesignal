@@ -4,7 +4,7 @@ The beta is limited to 50 invited Pro users. Combined metadata sync and user-req
 
 ## Database and invites
 
-1. Apply `supabase/002_email_beta.sql` after `supabase.sql` and `supabase/001_premium.sql`, then apply `supabase/003_email_content_summaries.sql`, `supabase/004_fix_summary_attempts.sql`, and `supabase/005_user_keys_and_hardening.sql` in order in the Supabase SQL Editor.
+1. Apply `supabase/002_email_beta.sql` after `supabase.sql` and `supabase/001_premium.sql`, then apply `supabase/003_email_content_summaries.sql`, `supabase/004_fix_summary_attempts.sql`, and `supabase/005_user_keys_and_hardening.sql` in order in the Supabase SQL Editor. Later feature migrations are numbered 006 onward; use `docs/MANUAL_STEPS.md` for the current remaining database steps.
 2. Invite only testers who already have a Pro subscription or active Pro trial.
 3. After a tester has signed up, add their Supabase user UUID in SQL Editor:
 
@@ -58,7 +58,7 @@ The Cloudflare Cron Triggers enqueue mailbox sync every six hours, process one b
 - Job status and encrypted generated summaries are retained for 30 days, then deleted when the user next opens the summaries page. Disconnecting a mailbox deletes jobs associated with that connection through the foreign-key cascade.
 - `email_seen_messages` retains message IDs for deduplication and deletes them after 14 days. The Worker does not persist subjects, senders, bodies, or attachments.
 - Every 100 new message IDs creates a labeled synthetic report. Scheduled roll-ups are also synthetic. A count of detected new messages may be included, but no email content is included in those fixture reports.
-- In-app reports are available from the same tab. Email delivery uses the connected mailbox addresses and requires Resend configuration.
+- In-app reports are available from the same tab. Synthetic beta-report email is separate from scheduled edition delivery; scheduled delivery is managed in **Brief settings** and documented in `docs/delivery.md`.
 - The Account → Privacy button deletes mailbox connections, summary jobs, reports, message IDs, OAuth state, and the per-user encryption key. Google refresh-token revocation is attempted. Microsoft does not offer a per-refresh-token revoke endpoint; users should also remove BingleSignal from their Microsoft account app permissions when requesting immediate provider-side revocation.
 - Set `EMAIL_BETA_ENABLED=false` to disable beta API access and scheduled processing.
 - Content summaries require a valid provider configuration and `EMAIL_AI_API_KEY`. OpenAI-compatible providers also require the endpoint and model. Anthropic can use the default model. Deploy the Wrangler Durable Object migration before enabling email summarization; without the budget service, summaries fall back to rules-only output.

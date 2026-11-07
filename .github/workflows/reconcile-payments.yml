@@ -1,0 +1,33 @@
+name: Reconcile payment subscriptions
+
+on:
+  schedule:
+    - cron: '15 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reconcile Razorpay subscriptions
+        run: node scripts/reconcile-payments.mjs
+        env:
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_PLAN_LITE_MONTHLY: ${{ secrets.RAZORPAY_PLAN_LITE_MONTHLY }}
+          RAZORPAY_PLAN_PRO_MONTHLY: ${{ secrets.RAZORPAY_PLAN_PRO_MONTHLY }}
+          RAZORPAY_PLAN_LITE_YEARLY: ${{ secrets.RAZORPAY_PLAN_LITE_YEARLY }}
+          RAZORPAY_PLAN_PRO_YEARLY: ${{ secrets.RAZORPAY_PLAN_PRO_YEARLY }}
+          RAZORPAY_PLAN_LITE_MONTHLY_USD: ${{ secrets.RAZORPAY_PLAN_LITE_MONTHLY_USD }}
+          RAZORPAY_PLAN_PRO_MONTHLY_USD: ${{ secrets.RAZORPAY_PLAN_PRO_MONTHLY_USD }}
+          RAZORPAY_PLAN_LITE_YEARLY_USD: ${{ secrets.RAZORPAY_PLAN_LITE_YEARLY_USD }}
+          RAZORPAY_PLAN_PRO_YEARLY_USD: ${{ secrets.RAZORPAY_PLAN_PRO_YEARLY_USD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

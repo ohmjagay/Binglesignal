@@ -15,6 +15,8 @@ EMAIL_FORWARD_DOMAIN=in.binglesignal.com
 CF_ZONE_ID=
 CF_EMAIL_ROUTING_TOKEN=
 CF_EMAIL_WORKER_NAME=
+CLOUDFLARE_ACCOUNT_ID=                # GitHub Actions only, for public-story embeddings
+CLOUDFLARE_API_TOKEN=                 # GitHub Actions only, Workers AI run permission
 EMAIL_TOKEN_ENCRYPTION_KEY=         # legacy key only; keep until existing mailbox tokens have migrated
 KEK_V1=                             # base64-encoded random 32-byte key; wraps each user's data key
 KEK_CURRENT=v1                      # active KEK version identifier
@@ -35,11 +37,25 @@ EMAIL_AI_MONTHLY_BUDGET_EXCEEDED=false # emergency switch: true forces rules-onl
 RESEND_API_KEY=                     # optional until email reports are enabled
 EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@your-domain>
 
+# --- Briefing delivery ---
+DELIVERY_EMAIL_PROVIDER=            # resend or ses
+DELIVERY_FROM_EMAIL=                # address verified with the selected provider
+DELIVERY_PHYSICAL_ADDRESS=          # legal mailing address for email footers
+DELIVERY_UNSUBSCRIBE_SECRET=        # random secret used to sign unsubscribe links
+PUBLIC_BASE_URL=                    # https://binglesignal.com
+SES_REGION=                         # AWS region containing the verified SES identity
+SES_ACCESS_KEY_ID=                  # IAM key restricted to ses:SendEmail
+SES_SECRET_ACCESS_KEY=              # secret
+SES_SESSION_TOKEN=                  # optional temporary AWS credential
+TELEGRAM_BOT_TOKEN=                 # secret from Telegram BotFather
+TELEGRAM_BOT_USERNAME=              # public bot username, without @
+TELEGRAM_WEBHOOK_SECRET=            # random secret sent with Telegram webhook requests
+
 # --- India: Razorpay (Dashboard -> Account & Settings -> API keys; Subscriptions -> Plans; Webhooks) ---
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=            # you choose it when adding the webhook https://binglesignal.com/api/webhooks/razorpay
-# USD Razorpay plan IDs; international recurring payments are not used until T9.
+# USD Razorpay plan IDs; leave empty until payment-provider setup is approved.
 RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx
 RAZORPAY_PLAN_PRO_MONTHLY_USD=      # plan_xxx
 RAZORPAY_PLAN_LITE_YEARLY_USD=      # plan_xxx
@@ -58,3 +74,7 @@ GLOBAL_LINK_PRO_MONTH=              # Pro monthly ($11)
 GLOBAL_LINK_LITE_YEAR=              # Lite yearly ($50)
 GLOBAL_LINK_PRO_YEAR=               # Pro yearly ($110)
 GLOBAL_LINK_PARAMS=                 # optional: how your provider wants email + user id added, default: email={email}&metadata_user_id={user_id}&metadata_plan={plan}
+GLOBAL_PRODUCT_LITE_MONTH=          # product ID returned by the global provider for Lite monthly
+GLOBAL_PRODUCT_PRO_MONTH=           # product ID returned by the global provider for Pro monthly
+GLOBAL_PRODUCT_LITE_YEAR=           # product ID returned by the global provider for Lite yearly
+GLOBAL_PRODUCT_PRO_YEAR=            # product ID returned by the global provider for Pro yearly

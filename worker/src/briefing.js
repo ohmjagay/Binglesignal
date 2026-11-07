@@ -1,4 +1,5 @@
 import { authUser, supabaseRequest } from './supabase.js';
+import { deliverEdition } from './delivery.js';
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
@@ -7,6 +8,18 @@ const INTEREST_LABELS = {
   ai: 'AI', business: 'business', india: 'India', fintech: 'fintech', markets: 'markets',
   policy: 'policy', startups: 'startups', tech: 'technology', world: 'world affairs',
 };
+const ROLE_TEMPLATES = {
+  ceo_founder: ['startups', 'business', 'policy', 'markets'],
+  cfo: ['markets', 'fintech', 'business', 'policy'],
+  product: ['tech', 'ai', 'startups', 'business'],
+  marketing_brand: ['business', 'consumer', 'marketing', 'tech'],
+  investor: ['startups', 'markets', 'fintech', 'business'],
+  consultant: ['business', 'policy', 'tech', 'world'],
+  legal_ca: ['policy', 'law', 'markets', 'india'],
+  doctor: ['health', 'science', 'policy', 'india'],
+  other: ['business', 'tech', 'world'],
+};
+const VALID_WATCHLIST_KINDS = new Set(['company', 'keyword', 'regulator', 'person']);
 const clamp = (value) => Math.max(0, Math.min(1, value));
 
 async function rows(env, path, init) {
@@ -99,9 +112,10 @@ function terms(value) {
 }
 
 export function rankEdition(stories, notes, profile, watchlist, recentlyShown, plan, now = Date.now()) {
-  const interests = Array.isArray(profile?.interests)
+  const declared = Array.isArray(profile?.interests)
     ? profile.interests.map((interest) => typeof interest === 'string' ? interest : interest?.id).filter(Boolean)
     : [];
+  const interests = [...new Set([...declared, ...(ROLE_TEMPLATES[profile?.role] || ROLE_TEMPLATES.other)])];
   const watches = watchlist.map((entry) => ({ term: String(entry.term || '').trim(), kind: entry.kind }))
     .filter((entry) => entry.term);
   const recent = new Set(recentlyShown);
@@ -127,15 +141,18 @@ export function rankEdition(stories, notes, profile, watchlist, recentlyShown, p
       (0.7 + 0.3 * Math.min(1, Math.log2(sourceCount + 1) / 2)));
     const ageHours = Math.max(0, (now - Date.parse(story.published_at || representative.d || now)) / 36e5);
     const category = String(note.category || 'news').toLowerCase();
+    const learnedWeight = Number(profile?.learned_weights?.[category]) || 0;
     const halfLife = /market|finance/.test(category) ? 3 : /policy|regulat/.test(category) ? 24 : 72;
     const urgency = 2 ** (-ageHours / halfLife);
     const region = String(profile?.region || '').toUpperCase();
     const personal = clamp((matchedWatches.length ? 1 : 0) * 0.75 + (matchedInterests.length ? 0.5 : 0) +
       ((representative.g || []).includes(region) ? 0.25 : 0));
     const novelty = recent.has(story.story_id) ? 0 : 1;
-    const score = 0.35 * relevance + 0.25 * importance + 0.15 * urgency + 0.15 * personal + 0.10 * novelty;
+    const score = 0.35 * relevance + 0.25 * importance + 0.15 * urgency + 0.15 * personal +
+      0.10 * novelty + 0.10 * Math.max(-1, Math.min(1, learnedWeight));
     const whyRanked = matchedWatches.length
       ? `Watchlist match: ${matchedWatches.slice(0, 2).map((match) => match.term).join(', ')}.`
+      : learnedWeight >= 0.3 ? `Recent feedback favors ${category} stories.`
       : matchedInterests.length
         ? `Matches your ${matchedInterests.slice(0, 2).map((interest) => INTEREST_LABELS[interest] || interest).join(' and ')} interests.`
         : tier === 1 ? 'Primary-source update with high editorial importance.'
@@ -144,6 +161,8 @@ export function rankEdition(stories, notes, profile, watchlist, recentlyShown, p
       ? `This matches your watchlist: ${matchedWatches.slice(0, 2).map((match) => match.term).join(', ')}.`
       : matchedInterests.length
         ? `This relates to your selected interests: ${matchedInterests.slice(0, 2).map((interest) => INTEREST_LABELS[interest] || interest).join(', ')}.`
+        : profile?.role && profile.role !== 'other'
+          ? `This update may affect your ${String(profile.role).replace(/_/g, ' ')} work.`
         : '';
     return {
       story_id: story.story_id,
@@ -202,7 +221,113 @@ export async function handleBriefingRequest(req, env) {
   if (url.pathname === '/api/edition/latest' && req.method === 'GET') {
     const editions = await rows(env,
       `/rest/v1/editions?user_id=eq.${encodeURIComponent(context.user.id)}&select=slot_key,kind,plan,local_date,local_slot,items,safely_ignore,created_at,opened_at&order=created_at.desc&limit=1`);
-    return json({ edition: editions[0] || null });
+    const edition = editions[0] || null;
+    if (edition && !edition.opened_at) {
+      await rows(env, '/rest/v1/rpc/record_edition_event', {
+        method: 'POST',
+        body: JSON.stringify({ p_user_id: context.user.id, p_slot_key: edition.slot_key, p_event_name: 'edition_opened' }),
+      });
+      edition.opened_at = new Date().toISOString();
+    }
+    return json({ edition });
+  }
+  if (url.pathname === '/api/edition/event' && req.method === 'POST') {
+    let body;
+    try { body = await req.json(); } catch { return json({ error: 'invalid JSON body' }, 400); }
+    if (typeof body?.slot_key !== 'string' || body.slot_key.length > 160 || body.event_name !== 'edition_completed') {
+      return json({ error: 'invalid edition event' }, 400);
+    }
+    const recorded = await rows(env, '/rest/v1/rpc/record_edition_event', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_user_id: context.user.id,
+        p_slot_key: body.slot_key,
+        p_event_name: body.event_name,
+      }),
+    });
+    return json({ ok: true, recorded: recorded === true });
+  }
+  if (url.pathname === '/api/metrics' && req.method === 'GET') {
+    const metrics = await rows(env,
+      `/rest/v1/user_metrics?user_id=eq.${encodeURIComponent(context.user.id)}&select=completed_editions,time_saved_minutes&limit=1`);
+    return json({ metrics: metrics[0] || { completed_editions: 0, time_saved_minutes: 0 } });
+  }
+  if (url.pathname === '/api/profile' && req.method === 'GET') {
+    const profiles = await rows(env,
+      `/rest/v1/user_profile_v2?user_id=eq.${encodeURIComponent(context.user.id)}&select=role,industry,region,timezone,delivery_time,delivery_channel,brief_length,interests,blocked_topics,muted_sources,learned_weights&limit=1`);
+    return json({ profile: profiles[0] || {
+      role: 'other', industry: '', region: 'GL', timezone: 'UTC', delivery_time: '07:00',
+      delivery_channel: 'app', brief_length: 10, interests: [], blocked_topics: [], muted_sources: [],
+    } });
+  }
+  if (url.pathname === '/api/profile' && req.method === 'PUT') {
+    let body;
+    try { body = await req.json(); } catch { return json({ error: 'invalid JSON body' }, 400); }
+    const roles = new Set([...Object.keys(ROLE_TEMPLATES)]);
+    const time = String(body?.delivery_time || '');
+    const interests = body?.interests;
+    const blockedTopics = body?.blocked_topics;
+    const mutedSources = body?.muted_sources;
+    let timezoneValid = false;
+    try { new Intl.DateTimeFormat('en', { timeZone: body?.timezone }).format(); timezoneValid = true; } catch {}
+    if (!body || !roles.has(body.role) || typeof body.industry !== 'string' || body.industry.length > 80 ||
+        !/^(IN|US|EU|GL|[A-Z]{2})$/.test(body.region) || !timezoneValid ||
+        !/^([01]\d|2[0-3]):(00|15|30|45)$/.test(time) ||
+        !['app', 'email', 'telegram'].includes(body.delivery_channel) ||
+        ![5, 10, 15].includes(body.brief_length) ||
+        !Array.isArray(interests) || interests.length > 20 || interests.some(value => typeof value !== 'string' || !/^[a-z0-9_-]{1,40}$/.test(value)) ||
+        !Array.isArray(blockedTopics) || blockedTopics.length > 30 || blockedTopics.some(value => typeof value !== 'string' || value.length > 80) ||
+        !Array.isArray(mutedSources) || mutedSources.length > 50 || mutedSources.some(value => typeof value !== 'string' || value.length > 120)) {
+      return json({ error: 'invalid briefing profile' }, 400);
+    }
+    const [profile] = await rows(env, '/rest/v1/user_profile_v2?on_conflict=user_id', {
+      method: 'POST',
+      headers: { prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify({
+        user_id: context.user.id,
+        role: body.role,
+        industry: body.industry.trim(),
+        region: body.region,
+        timezone: body.timezone,
+        delivery_time: time,
+        delivery_channel: body.delivery_channel,
+        brief_length: body.brief_length,
+        interests: [...new Set(interests)],
+        blocked_topics: [...new Set(blockedTopics.map(value => value.trim()).filter(Boolean))],
+        muted_sources: [...new Set(mutedSources.map(value => value.trim()).filter(Boolean))],
+        updated_at: new Date().toISOString(),
+      }),
+    });
+    return json({ profile });
+  }
+  if (url.pathname === '/api/watchlist' && req.method === 'GET') {
+    const watchlist = await rows(env,
+      `/rest/v1/watchlists?user_id=eq.${encodeURIComponent(context.user.id)}&select=id,kind,term,created_at&order=created_at.desc&limit=50`);
+    return json({ watchlist, limit: context.plan === 'pro' ? 50 : 10 });
+  }
+  if (url.pathname === '/api/watchlist' && req.method === 'POST') {
+    let body;
+    try { body = await req.json(); } catch { return json({ error: 'invalid JSON body' }, 400); }
+    if (!VALID_WATCHLIST_KINDS.has(body?.kind) || typeof body.term !== 'string' ||
+        body.term.trim().length < 2 || body.term.trim().length > 80) return json({ error: 'invalid watchlist entry' }, 400);
+    const existing = await rows(env,
+      `/rest/v1/watchlists?user_id=eq.${encodeURIComponent(context.user.id)}&select=id&limit=50`);
+    const limit = context.plan === 'pro' ? 50 : 10;
+    if (existing.length >= limit) return json({ error: `Your plan supports up to ${limit} watchlist entries` }, 409);
+    const [entry] = await rows(env, '/rest/v1/watchlists?on_conflict=user_id,kind,term', {
+      method: 'POST',
+      headers: { prefer: 'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify({ user_id: context.user.id, kind: body.kind, term: body.term.trim() }),
+    });
+    return json({ watchlist: entry || null });
+  }
+  if (url.pathname === '/api/watchlist' && req.method === 'DELETE') {
+    const id = url.searchParams.get('id') || '';
+    if (!/^\d{1,20}$/.test(id)) return json({ error: 'invalid watchlist id' }, 400);
+    await rows(env,
+      `/rest/v1/watchlists?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(context.user.id)}`,
+      { method: 'DELETE', headers: { prefer: 'return=minimal' } });
+    return json({ ok: true });
   }
   if (url.pathname === '/api/feedback' && req.method === 'POST') {
     let body;
@@ -221,6 +346,15 @@ export async function handleBriefingRequest(req, env) {
         story_id: body.story_id,
         signal: body.signal,
         source: body.signal === 'mute_source' ? body.source.trim() : null,
+      }),
+    });
+    await rows(env, '/rest/v1/events', {
+      method: 'POST',
+      headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({
+        user_id: context.user.id,
+        name: 'feedback',
+        props: { signal: body.signal },
       }),
     });
     return json({ ok: true });
@@ -244,7 +378,7 @@ export async function handleEditionSchedule(env, now = new Date()) {
   const userIds = [...new Set(due.map((slot) => slot.user_id))];
   const filter = inFilter(userIds);
   const [profiles, watchlist, feedback, previous, pool] = await Promise.all([
-    rows(env, `/rest/v1/user_profile_v2?user_id=${filter}&select=user_id,role,industry,timezone,delivery_time,brief_length,interests,blocked_topics,muted_sources`),
+    rows(env, `/rest/v1/user_profile_v2?user_id=${filter}&select=user_id,role,industry,timezone,delivery_time,delivery_channel,brief_length,interests,blocked_topics,muted_sources,learned_weights`),
     rows(env, `/rest/v1/watchlists?user_id=${filter}&select=user_id,kind,term`),
     rows(env, `/rest/v1/feedback?user_id=${filter}&created_at=gte.${encodeURIComponent(new Date(now.getTime() - 3 * 864e5).toISOString())}&select=user_id,story_id,signal,source`),
     rows(env, `/rest/v1/editions?user_id=${filter}&created_at=gte.${encodeURIComponent(new Date(now.getTime() - 3 * 864e5).toISOString())}&select=user_id,items&limit=1000`),
@@ -290,4 +424,20 @@ export async function handleEditionSchedule(env, now = new Date()) {
     body: JSON.stringify(upserts),
   });
   console.log('briefing editions composed', upserts.length);
+  let sent = 0, failed = 0;
+  for (const edition of upserts) {
+    const profile = profilesByUser.get(edition.user_id);
+    if (!profile || !['email', 'telegram'].includes(profile.delivery_channel)) continue;
+    try {
+      const result = await deliverEdition(env, profile, edition);
+      if (result.status === 'sent') sent++;
+    } catch (error) {
+      failed++;
+      console.warn('briefing delivery failed', {
+        channel: profile.delivery_channel,
+        status_code: error.statusCode || 500,
+      });
+    }
+  }
+  if (sent || failed) console.log('briefing deliveries completed', { sent, failed });
 }

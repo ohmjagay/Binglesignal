@@ -1,6 +1,7 @@
 // BingleSignal app layer: preferences, pickers, sign-in, personal READ / WATCH feeds and the ranking engine.
 import {CATS,CAT,GROUPS,LBL,CC,ISO,EUROPE,cname} from './taxonomy.js';
 import {listMfaFactors} from './mfa.js';
+import {renderOnboarding} from './onboarding.js';
 const BS=window.BS||{},$=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=u=>/^https?:\/\//i.test(u)?esc(u):'#',short=(s,n)=>s.length>n?s.slice(0,n-1).replace(/\s+\S*$/,'')+'…':s,
@@ -163,7 +164,14 @@ sg=x=>1/(1+Math.exp(-x)),dot=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*
 rng=a=>()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296},
 inGeo=(g,u)=>u==='EU'?(g==='EU'||EUROPE.has(g)):u===g;
 let POOL=null;const ITEM={};
-async function loadPool(){if(POOL)return POOL;try{const r=await fetch('pool.json');if(!r.ok)throw 0;POOL=await r.json();for(const i of POOL.items)ITEM[i.id]=i}catch{POOL={items:[],gen:0}}return POOL}
+async function loadPool(){
+ if(POOL)return POOL;
+ const access=await token();if(!access)throw new Error('Your sign-in expired. Please sign in again.');
+ const response=await fetch('/api/pool',{headers:{authorization:'Bearer '+access}});
+ let result={};try{result=await response.json()}catch{}
+ if(!response.ok)throw new Error(result.error||'Your briefing could not be loaded ('+response.status+').');
+ POOL=result;for(const item of POOL.items||[])ITEM[item.id]=item;return POOL
+}
 function geoOf(i){const hit=a=>{let b=0;for(const g of a||[])P.geos.forEach((u,j)=>{if(inGeo(g,u))b=Math.max(b,j?.85:1)});return b},s=hit(i.g),m=hit(i.m);return i.g?.length?Math.max(s,m*.8):Math.max(.7,m)}
 // features: [bias, relevance (every matched interest adds, weighted by its priority: touching more interests ranks higher), coverage, geography, social proof, source quality, freshness, keyword affinity, source affinity]
 function feat(i){
@@ -206,7 +214,7 @@ function cardR(c){const i=c.i,n=i.k.filter(k=>P.sel.includes(k)).length,t=c.ex?'
  return`<article class="card item" data-id="${i.id}"><div class="ct"><span class="tag">${PL[i.p]||'News'}</span><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.x?`<p>${esc(short(i.x,200))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" class="${PR.lk.includes(i.id)?'on':''}">♥ Like</button><button data-a="save" class="${PR.sv.includes(i.id)?'on':''}">⚑ Save</button><button data-a="hide">✕ Less like this</button></span></div></article>`}
 function cardV(c){const i=c.i;return`<div class="vc" data-id="${i.id}" data-a="vp" role="button" tabindex="0"><div class="th"><img src="https://i.ytimg.com/vi/${encodeURIComponent(i.vid)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><span class="pb">▶</span></div><h4>${esc(i.t)}</h4><small>${esc(i.s)} · ${fmt(i.e||0)} views · ${ago(i.d*1000)}</small><div class="chips sm">${c.ex?'<span>Explore</span>':''}${chips(i)}</div></div>`}
 function shell(tab){let b=$('#home .brand')?.outerHTML||'<span class="brand serif">BingleSignal</span>';b=b.replace('id="g"','id="g2"').replace('url(#g)','url(#g2)');
- $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a><a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a></nav><div class="hdr-r"><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
+ $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a><a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a></nav><div class="hdr-r"><a class="link" href="#/onboarding">Brief settings</a><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
 function summary(n,total){return`<section class="sum"><div class="eyebrow">${TAB==='read'?'Read':'Watch'} · ranked for you</div><h1 class="serif">${P.name?esc(P.name)+', your':'Your'} ${TAB==='read'?'reading list':'video queue'}</h1><div class="chips sm">${P.geos.map(g=>`<span>${esc(cname(g))}</span>`).join('')}${P.sel.slice(0,8).map(id=>`<span>${esc(LBL[id])}</span>`).join('')}${P.sel.length>8?`<span>+${P.sel.length-8} more</span>`:''}</div><small>${n} ranked from ${total} candidates · feed built ${POOL.gen?ago(POOL.gen*1000):'just now'} · it learns from every like, hide, skip and watch</small></section>`}
 function empty(){return`<div class="card end">Your personal feed is being prepared. The first edition appears within a few minutes of the first automatic build - please check back shortly.</div>`}
 function renderRead(){
@@ -219,9 +227,32 @@ function renderRead(){
   else if(VIS.has(id)){const d=Date.now()-VIS.get(id);VIS.delete(id);if(!ACT.has(id)&&SK<40){SK++;if(d<900)learn(i,{k:1,c:0},-.08,1);else if(d>4000)learn(i,{c:.6},.08,1)}}}},{threshold:[0,.6]});
  sobs?.disconnect();sobs=new IntersectionObserver(es=>{if(es[0].isIntersecting)more()},{rootMargin:'700px'});more();sobs.observe($('#sent'))}
 function more(){const L=list(),box=$('#rl'),s=$('#sent');if(!box||!s)return;const part=L.slice(SHOWN,SHOWN+20);
- if(part.length){box.insertAdjacentHTML('beforeend',part.map(cardR).join(''));SHOWN+=part.length;part.forEach(c=>{const el=box.querySelector(`[data-id="${c.i.id}"]`);if(el)obs.observe(el)})}
- if(SHOWN>=L.length){s.innerHTML=`<div class="end">You've reached the end of today's ${L.length} ranked stories.<br>A fresh ranking arrives every 6 hours. Unlimited scrolling is coming with BingleSignal Plus.</div>`;sobs.disconnect()}
+ if(part.length){box.insertAdjacentHTML('beforeend',part.map(cardR).join(''));SHOWN+=part.length;part.forEach(c=>{const el=box.querySelector(`[data-id="${c.i.id}"]`);if(el){el.insertAdjacentHTML('beforeend','<button data-a="mute">Mute source</button>');obs.observe(el)}})}
+ if(SHOWN>=L.length){s.innerHTML=`<div class="end">You've reached the end of today's ${L.length} ranked stories.<br>A fresh ranking arrives every 6 hours. Unlimited scrolling is coming with BingleSignal Plus.</div>`;if(TAB==='read')recordEditionCompletion();sobs.disconnect()}
  else{s.innerHTML='<div class="end">Loading more…</div>';requestAnimationFrame(()=>{if(s.getBoundingClientRect().top<innerHeight+700)more()})}}
+let completedEditionSlot='';
+async function recordEditionOpened(){
+ try{
+  const access=await token();if(!access)return;
+  const response=await fetch('/api/edition/latest',{headers:{authorization:'Bearer '+access}});
+  if(!response.ok)throw Object.assign(new Error(),{statusCode:response.status});
+  const edition=(await response.json()).edition;
+  return edition?.slot_key || null;
+ }catch(error){console.warn('Edition open event failed',{status_code:error.statusCode||0})}
+}
+async function recordEditionCompletion(){
+ try{
+  const access=await token();if(!access)return;
+  const latest=await fetch('/api/edition/latest',{headers:{authorization:'Bearer '+access}});
+  if(!latest.ok)throw Object.assign(new Error(),{statusCode:latest.status});
+  const edition=(await latest.json()).edition;
+  if(!edition?.slot_key||edition.slot_key===completedEditionSlot)return;
+  const response=await fetch('/api/edition/event',{method:'POST',headers:{authorization:'Bearer '+access,'content-type':'application/json'},
+   body:JSON.stringify({slot_key:edition.slot_key,event_name:'edition_completed'})});
+  if(!response.ok)throw Object.assign(new Error(),{statusCode:response.status});
+  completedEditionSlot=edition.slot_key;
+ }catch(error){console.warn('Edition completion event failed',{status_code:error.statusCode||0})}
+}
 function renderWatch(){
  const W=rank(POOL.items,BS.watchCap||30,true);
  $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
@@ -344,9 +375,12 @@ async function renderEmailBeta(){
 // after feedback, re-rank only what the reader has not seen yet
 function reTail(){if(TAB!=='read')return;const keep=READ.slice(0,SHOWN),ids=new Set(keep.map(c=>c.i.id)),cl=new Set(keep.map(c=>c.i.c));
  READ=keep.concat(rank(POOL.items.filter(i=>!ids.has(i.id)&&!cl.has(i.c)),(BS.readCap||200)-keep.length,false))}
-function like(i){const x=PR.lk.indexOf(i.id);if(x>=0){PR.lk.splice(x,1);persist();return false}PR.lk.push(i.id);ACT.add(i.id);learn(i,{c:1,l:1},1.2);reTail();return true}
-function save(i){const x=PR.sv.indexOf(i.id);if(x>=0){PR.sv.splice(x,1);persist();return false}PR.sv.push(i.id);ACT.add(i.id);learn(i,{c:1,s:1},1.5);reTail();return true}
-function hide(i){PR.hid.push(i.id);ACT.add(i.id);learn(i,{k:1},-1.5);reTail()}
+function sendFeedback(i,signal,source){token().then(t=>api('/api/feedback',{m:'POST',t,b:{story_id:i.c||i.id,signal,...(source?{source}:{})}}))
+ .then(()=>{let status=$('#feedback-status');if(!status){status=document.createElement('p');status.className='email-message';status.setAttribute('role','status');$('#am')?.prepend(status)}status.textContent='Thanks — your briefing will adapt to this feedback.'})
+ .catch(error=>{let status=$('#feedback-status');if(!status){status=document.createElement('p');status.className='email-message';status.setAttribute('role','status');$('#am')?.prepend(status)}if(status)status.textContent=error.message})}
+function like(i){const x=PR.lk.indexOf(i.id);if(x>=0){PR.lk.splice(x,1);persist();return false}PR.lk.push(i.id);ACT.add(i.id);learn(i,{c:1,l:1},1.2);sendFeedback(i,'like');reTail();return true}
+function save(i){const x=PR.sv.indexOf(i.id);if(x>=0){PR.sv.splice(x,1);persist();return false}PR.sv.push(i.id);ACT.add(i.id);learn(i,{c:1,s:1},1.5);sendFeedback(i,'save');reTail();return true}
+function hide(i,signal='less_like',source){PR.hid.push(i.id);ACT.add(i.id);learn(i,{k:1},-1.5);sendFeedback(i,signal,source);reTail()}
 function play(i){
  ACT.add(i.id);let dur=0,st=-1,watched=0,got=false;const t0=Date.now(),
  m=modal(`<div class="pw"><iframe id="yt" src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(i.vid)}?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}" title="${esc(i.t)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div><h3 class="serif" style="margin:14px 0 4px">${esc(i.t)}</h3><small>${esc(i.s)} · <a href="https://www.youtube.com/watch?v=${encodeURIComponent(i.vid)}" target="_blank" rel="noopener noreferrer">Open on YouTube</a></small><div class="acts"><span></span><span><button data-a="like">♥ Like</button><button data-a="hide">✕ Not for me</button></span></div>`,'vid'),
@@ -354,13 +388,13 @@ function play(i){
  const on=e=>{try{if(!/(^|\.)youtube(-nocookie)?\.com$/.test(new URL(e.origin).hostname))return;const d=typeof e.data==='string'?JSON.parse(e.data):e.data;if(d.event==='infoDelivery'&&d.info){got=true;if(d.info.duration)dur=d.info.duration;if(d.info.playerState!=null)st=d.info.playerState}}catch{}},
  tick=setInterval(()=>{if(st===1)watched++},1000);addEventListener('message',on);
  m.onclick=e=>{const a=e.target.dataset?.a;if(a==='like'){e.target.classList.toggle('on',like(i))}else if(a==='hide'){hide(i);closeModal()}};
- onClose=()=>{clearInterval(tick);removeEventListener('message',on);const w=got?watched:(Date.now()-t0)/1000*.6,r=dur?cl(w/dur,0,1):cl(w/120,0,1);learn(i,{c:1,l:r>.6?1:0,k:w<4?1:0},w<4?-.6:2*r-.5);if(TAB==='watch'&&$('#am'))renderWatch()}}
+ onClose=()=>{clearInterval(tick);removeEventListener('message',on);const w=got?watched:(Date.now()-t0)/1000*.6,r=dur?cl(w/dur,0,1):cl(w/120,0,1);learn(i,{c:1,l:r>.6?1:0,k:w<4?1:0},w<4?-.6:2*r-.5);sendFeedback(i,w<4?'skip':'dwell');if(TAB==='watch'&&$('#am'))renderWatch()}}
 $('#app').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,card=b.closest('[data-id]'),i=ITEM[card?.dataset.id];
  if(a==='so')return out();if(a==='ep'){location.hash='#/';setTimeout(()=>$('#tune')?.scrollIntoView({behavior:'smooth'}),80);return}
  if(a==='pf'){PF=b.dataset.k;return renderRead()}if(!i)return;
- if(a==='open'){ACT.add(i.id);learn(i,{c:1},.5)}
+ if(a==='open'){ACT.add(i.id);learn(i,{c:1},.5);sendFeedback(i,'open')}
  else if(a==='like')b.classList.toggle('on',like(i));else if(a==='save')b.classList.toggle('on',save(i));
- else if(a==='hide'){hide(i);card.remove()}else if(a==='vp')play(i)});
+ else if(a==='hide'){hide(i);card.remove()}else if(a==='mute'){hide(i,'mute_source',i.s);card.remove()}else if(a==='vp')play(i)});
 $('#app').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.dataset?.a==='vp'){e.preventDefault();e.target.click()}});
 
 /* ---------- routing ---------- */
@@ -372,12 +406,16 @@ export async function route(){
  if(r)openAuth('Sign-in did not complete: '+r,'in');
  if(/^#\/email(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to use the invited email beta.','in');return}
   home.hidden=true;app.hidden=false;shell('email');$('#am').innerHTML='<div class="end">Loading email beta…</div>';await renderEmailBeta();scrollTo(0,0);return}
+ if(/^#\/onboarding(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to personalize your briefing.','in');return}
+  home.hidden=true;app.hidden=false;shell('read');await renderOnboarding($('#am'));scrollTo(0,0);return}
  const m=location.hash.match(/^#\/me(?:\/(read|watch))?/),home=$('#home'),app=$('#app');
  if(!m){home.hidden=false;app.hidden=true;return}
  if(!S){home.hidden=false;app.hidden=true;history.replaceState(null,'',location.pathname);openAuth('Sign in to open your personal briefing.','in');return}
  home.hidden=true;app.hidden=false;TAB=m[1]||'read';shell(TAB);$('#am').innerHTML='<div class="end">Building your feed…</div>';
- await loadPool();if(rid!==RID||!location.hash.startsWith('#/me'))return;
+ try{await loadPool()}catch(error){if(rid===RID)$('#am').innerHTML=`<div class="card end" role="alert">${esc(error.message)}</div>`;return}
+ if(rid!==RID||!location.hash.startsWith('#/me'))return;
  await window.BSAccess?.ready;if(rid!==RID||!location.hash.startsWith('#/me'))return;
+ if(TAB==='read')await recordEditionOpened();
  TAB==='read'?renderRead():renderWatch();scrollTo(0,0)}
 window.BSAuth={
  token:()=>token(),
