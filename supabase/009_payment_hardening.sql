@@ -7,7 +7,7 @@ create table if not exists public.payment_checkout_sessions (
   attempt_id uuid not null unique,
   provider text not null check (provider in ('razorpay', 'global')),
   plan text not null references public.plans(id),
-  currency text not null check (currency in ('INR', 'USD')),
+  currency text not null check (currency in ('USD')),
   billing_interval text not null check (billing_interval in ('month', 'year')),
   gstin text,
   provider_subscription_id text,
