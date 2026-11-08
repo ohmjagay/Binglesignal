@@ -24,6 +24,19 @@ In GitHub, open the **ohmjagay/Binglesignal** repository → **Settings** → **
 
 Use the same approved paid AI provider used for the email summarizer. Do not copy any key into `public/config.js`, a committed file, or GitHub variables.
 
+### Example OpenAI setup for story ingestion
+
+For an OpenAI account, use these GitHub Actions **repository secrets**:
+
+| Secret | Value |
+|---|---|
+| `EMAIL_AI_PROVIDER` | `openai_compatible` |
+| `EMAIL_AI_ENDPOINT` | `https://api.openai.com/v1/chat/completions` |
+| `EMAIL_AI_MODEL` | `gpt-4o-mini` (or another currently enabled model that supports JSON-object output) |
+| `EMAIL_AI_API_KEY` | Create an API key in the OpenAI platform dashboard; do not paste it into chat or source control |
+
+For another OpenAI-compatible provider, use that provider's documented chat-completions URL and exact model ID; not every compatible endpoint accepts the same models or JSON output options. Anthropic uses `EMAIL_AI_PROVIDER=anthropic`, its built-in Messages API endpoint, and an Anthropic API key/model. Keep all four values as GitHub Actions secrets, then rerun **Actions → Refresh briefing**. If the provider rejects the request, the workflow error now includes its short validation message, without printing the configured key or endpoint.
+
 ## Checking source feeds
 
 From VS Code, open **Terminal** → **New Terminal**, then run:
