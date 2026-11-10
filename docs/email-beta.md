@@ -1,3 +1,5 @@
+> **Update (v6):** AI is now DeepSeek only. Wherever this page mentions `EMAIL_AI_PROVIDER`, `EMAIL_AI_ENDPOINT`, `EMAIL_AI_API_KEY` or `EMAIL_AI_MODEL`, use `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` instead. Plans and payments are now one Razorpay plan; the email beta is paused. See `docs/DEEPSEEK_MIGRATION.md`.
+
 # Email Summariser beta setup
 
 The beta is limited to 50 invited Pro users. Combined metadata sync and user-requested content summaries share a 500-message per-user-local-day cap. Users can request a summary of inbox messages (up to remaining daily quota), latest 50 messages, or a date range up to 31 calendar days. The Worker can use Anthropic's Messages API or an OpenAI-compatible HTTPS endpoint. Email text is untrusted, sent without model tools, and accepted only as schema-checked JSON; raw message bodies are not stored by BingleSignal, while generated summaries are encrypted with per-user data keys and retained for up to 30 days. Synthetic preview and scheduled reports remain fixtures and do not contain mailbox content.

@@ -303,7 +303,7 @@ test('Content summaries require consent, a configured AI endpoint, and an owned 
   fakeFetch(routes);
   const noConsent = await worker.fetch(post('/api/email/summaries', {
     connection_id: connection.id, mode: 'latest50',
-  }), { ...baseEnv, EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions', EMAIL_AI_API_KEY: 'test', EMAIL_AI_MODEL: 'model' });
+  }), { ...baseEnv, DEEPSEEK_BASE_URL: 'https://ai.example/v1', DEEPSEEK_API_KEY: 'test', DEEPSEEK_MODEL: 'model' });
   assert.equal(noConsent.status, 400);
 
   fakeFetch(routes);
@@ -317,9 +317,9 @@ test('Content summaries require consent, a configured AI endpoint, and an owned 
     connection_id: connection.id, mode: 'latest50', content_consent: true,
   }), {
     ...baseEnv,
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'test',
-    EMAIL_AI_MODEL: 'model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'test',
+    DEEPSEEK_MODEL: 'model',
   });
   assert.equal(response.status, 202);
   const insert = calls.find((call) => call.url.includes('/rest/v1/email_summary_jobs') && call.init.method === 'POST');
@@ -344,9 +344,9 @@ test('A user cannot create a summary job for another user mailbox', async () => 
     content_consent: true,
   }), {
     ...baseEnv,
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'test',
-    EMAIL_AI_MODEL: 'model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'test',
+    DEEPSEEK_MODEL: 'model',
   });
   assert.equal(response.status, 400);
   const lookup = calls.find((call) => call.url.includes('/rest/v1/email_connections?id='));
@@ -393,9 +393,9 @@ test('Content summary date ranges are validated and limited to 31 calendar days'
   });
   const env = {
     ...baseEnv,
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'test',
-    EMAIL_AI_MODEL: 'model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'test',
+    DEEPSEEK_MODEL: 'model',
   };
   const tooWide = await worker.fetch(post('/api/email/summaries', {
     connection_id: 'cccccccc-0000-0000-0000-000000000003',
@@ -560,9 +560,9 @@ test('Summary worker fetches selected Gmail content transiently and stores only 
     KEK_V1: Buffer.alloc(32, 8).toString('base64'),
     GOOGLE_CLIENT_ID: 'client-id',
     GOOGLE_CLIENT_SECRET: 'client-secret',
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'ai-key',
-    EMAIL_AI_MODEL: 'test-model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'ai-key',
+    DEEPSEEK_MODEL: 'test-model',
     AI: { run: async (_model, input) => ({ data: input.text.map(() => [1, 0]) }) },
   });
 
@@ -633,9 +633,9 @@ test('Summary worker reads Outlook inbox text only for the selected summary job'
     KEK_V1: Buffer.alloc(32, 8).toString('base64'),
     MICROSOFT_CLIENT_ID: 'client-id',
     MICROSOFT_CLIENT_SECRET: 'client-secret',
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'ai-key',
-    EMAIL_AI_MODEL: 'test-model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'ai-key',
+    DEEPSEEK_MODEL: 'test-model',
     AI: { run: async (_model, input) => ({ data: input.text.map(() => [1, 0]) }) },
   });
 

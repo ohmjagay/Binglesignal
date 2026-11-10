@@ -1,22 +1,47 @@
 # ======================================================================
-# Sensitive values below go into Cloudflare as Secrets. EMAIL_BETA_ENABLED is a plain variable.
-# Cloudflare dashboard -> Workers & Pages -> binglesignal -> Settings -> Variables and Secrets -> Add
-# (For local testing only, copy this file to .dev.vars and fill it. Never commit .dev.vars.)
+# Sensitive values go into Cloudflare as Secrets (Cloudflare dashboard -> Workers & Pages -> binglesignal ->
+# Settings -> Variables and Secrets -> Add). EMAIL_BETA_ENABLED is a plain variable.
+# Values marked [GitHub] must ALSO be added as GitHub Actions secrets (repo -> Settings -> Secrets and variables -> Actions)
+# because the "Refresh briefing" workflow reads them.
+# For local testing only, copy this file to .dev.vars and fill it. Never commit .dev.vars.
 # ======================================================================
 
 # --- Supabase (Project settings -> API) ---
-SUPABASE_URL=
+SUPABASE_URL=                       # [GitHub]
 SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=          # master key: only here, never in /public or GitHub code
+SUPABASE_SERVICE_ROLE_KEY=          # [GitHub] master key: only here and in GitHub secrets, never in /public or committed code
 
-# --- Invited email beta ---
+# --- AI: DeepSeek is the ONLY AI provider (it replaces Anthropic and OpenAI) ---
+DEEPSEEK_API_KEY=                   # [GitHub] secret from platform.deepseek.com -> API keys. Prepaid: keep a balance topped up.
+DEEPSEEK_MODEL=deepseek-flash       # [GitHub] exact model ID from https://api-docs.deepseek.com (names change: update here, no code change)
+# DEEPSEEK_BASE_URL=                # optional, defaults to https://api.deepseek.com
+# Story embeddings (grouping the same story from many publishers) stay on Cloudflare Workers AI, because DeepSeek has no embeddings API.
+CLOUDFLARE_ACCOUNT_ID=              # [GitHub]
+CLOUDFLARE_API_TOKEN=               # [GitHub] token with Workers AI permission
+YOUTUBE_API_KEY=                    # [GitHub] optional: video keyword search
+
+# --- Payments: Razorpay is the ONLY payment rail ---
+# Dashboard -> Account & Settings -> API keys; Subscriptions -> Plans; Settings -> Webhooks
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=            # you choose it when adding the webhook https://binglesignal.com/api/webhooks/razorpay
+# ONE plan: BingleSignal Briefing, monthly. Create two Razorpay plans (internally this plan is called "lite").
+RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx  INR plan, amount must equal prices.IN.month in public/config.js
+RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx  USD plan, amount must equal prices.GL.month in public/config.js ($5)
+# LEGACY plan IDs. Fill them ONLY if somebody already subscribed to an old plan, so their renewals keep working. Otherwise leave empty.
+RAZORPAY_PLAN_PRO_MONTHLY=
+RAZORPAY_PLAN_LITE_YEARLY=
+RAZORPAY_PLAN_PRO_YEARLY=
+RAZORPAY_PLAN_PRO_MONTHLY_USD=
+RAZORPAY_PLAN_LITE_YEARLY_USD=
+RAZORPAY_PLAN_PRO_YEARLY_USD=
+
+# --- Email beta: PAUSED (leave false). To bring it back: true here and emailBeta:true in public/config.js ---
 EMAIL_BETA_ENABLED=false
 EMAIL_FORWARD_DOMAIN=in.binglesignal.com
 CF_ZONE_ID=
 CF_EMAIL_ROUTING_TOKEN=
 CF_EMAIL_WORKER_NAME=
-CLOUDFLARE_ACCOUNT_ID=                # GitHub Actions only, for public-story embeddings
-CLOUDFLARE_API_TOKEN=                 # GitHub Actions only, Workers AI run permission
 EMAIL_TOKEN_ENCRYPTION_KEY=         # legacy key only; keep until existing mailbox tokens have migrated
 KEK_V1=                             # base64-encoded random 32-byte key; wraps each user's data key
 KEK_CURRENT=v1                      # active KEK version identifier
@@ -27,17 +52,13 @@ MICROSOFT_CLIENT_ID=                # OAuth app registration for Microsoft Graph
 MICROSOFT_CLIENT_SECRET=            # secret
 MICROSOFT_EMAIL_REDIRECT_URI=       # https://your-domain/api/email/oauth/outlook/callback
 EMAIL_BETA_RETURN_URL=              # https://your-domain/#/email
-EMAIL_AI_PROVIDER=openai_compatible # anthropic or openai_compatible
-EMAIL_AI_ENDPOINT=                  # HTTPS OpenAI-compatible /v1/chat/completions endpoint (openai_compatible only)
-EMAIL_AI_API_KEY=                   # secret; paid provider key, never for a free email-training tier
-EMAIL_AI_MODEL=                     # exact model ID enabled for your provider; required for story ingestion
-EMAIL_AI_DAILY_TOKEN_CAP=100000     # per-user daily token budget
+EMAIL_AI_DAILY_TOKEN_CAP=100000     # per-user daily token budget (email summaries use DEEPSEEK_API_KEY too)
 EMAIL_AI_MONTHLY_TOKEN_BUDGET=10000000 # global monthly token budget
 EMAIL_AI_MONTHLY_BUDGET_EXCEEDED=false # emergency switch: true forces rules-only summaries
 RESEND_API_KEY=                     # optional until email reports are enabled
 EMAIL_FROM=                         # verified sender, e.g. BingleSignal <beta@your-domain>
 
-# --- Briefing delivery ---
+# --- Briefing delivery (optional) ---
 DELIVERY_EMAIL_PROVIDER=            # resend or ses
 DELIVERY_FROM_EMAIL=                # address verified with the selected provider
 DELIVERY_PHYSICAL_ADDRESS=          # legal mailing address for email footers
@@ -51,30 +72,10 @@ TELEGRAM_BOT_TOKEN=                 # secret from Telegram BotFather
 TELEGRAM_BOT_USERNAME=              # public bot username, without @
 TELEGRAM_WEBHOOK_SECRET=            # random secret sent with Telegram webhook requests
 
-# --- India: Razorpay (Dashboard -> Account & Settings -> API keys; Subscriptions -> Plans; Webhooks) ---
-RAZORPAY_KEY_ID=
-RAZORPAY_KEY_SECRET=
-RAZORPAY_WEBHOOK_SECRET=            # you choose it when adding the webhook https://binglesignal.com/api/webhooks/razorpay
-# USD Razorpay plan IDs; leave empty until payment-provider setup is approved.
-RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx
-RAZORPAY_PLAN_PRO_MONTHLY_USD=      # plan_xxx
-RAZORPAY_PLAN_LITE_YEARLY_USD=      # plan_xxx
-RAZORPAY_PLAN_PRO_YEARLY_USD=       # plan_xxx
-# INR Razorpay plan IDs; create plans using the amounts configured in public/config.js.
-RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx
-RAZORPAY_PLAN_PRO_MONTHLY=          # plan_xxx
-RAZORPAY_PLAN_LITE_YEARLY=          # plan_xxx
-RAZORPAY_PLAN_PRO_YEARLY=           # plan_xxx
-
-# --- Worldwide: Dodo Payments (merchant of record: handles foreign VAT/sales tax) ---
-# USD hosted checkout links; create plans using the amounts configured in public/config.js.
+# --- LEGACY: global payment provider (no longer used for new purchases) ---
+# Leave empty unless somebody already subscribed through it; the webhook stays only so their renewals are not lost.
 GLOBAL_WEBHOOK_SECRET=              # starts with whsec_ ; webhook URL https://binglesignal.com/api/webhooks/global
-GLOBAL_LINK_LITE_MONTH=             # hosted checkout link for Lite monthly ($5)
-GLOBAL_LINK_PRO_MONTH=              # Pro monthly ($11)
-GLOBAL_LINK_LITE_YEAR=              # Lite yearly ($50)
-GLOBAL_LINK_PRO_YEAR=               # Pro yearly ($110)
-GLOBAL_LINK_PARAMS=                 # optional: how your provider wants email + user id added, default: email={email}&metadata_user_id={user_id}&metadata_plan={plan}
-GLOBAL_PRODUCT_LITE_MONTH=          # product ID returned by the global provider for Lite monthly
-GLOBAL_PRODUCT_PRO_MONTH=           # product ID returned by the global provider for Pro monthly
-GLOBAL_PRODUCT_LITE_YEAR=           # product ID returned by the global provider for Lite yearly
-GLOBAL_PRODUCT_PRO_YEAR=            # product ID returned by the global provider for Pro yearly
+GLOBAL_PRODUCT_LITE_MONTH=
+GLOBAL_PRODUCT_PRO_MONTH=
+GLOBAL_PRODUCT_LITE_YEAR=
+GLOBAL_PRODUCT_PRO_YEAR=

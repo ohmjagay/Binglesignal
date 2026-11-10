@@ -2,6 +2,7 @@
 import {CATS,CAT,GROUPS,LBL,CC,ISO,EUROPE,cname} from './taxonomy.js';
 import {listMfaFactors} from './mfa.js';
 import {renderOnboarding} from './onboarding.js';
+import {tasteScores,updateTaste,capPerKey} from './taste.js';
 const BS=window.BS||{},$=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=u=>/^https?:\/\//i.test(u)?esc(u):'#',short=(s,n)=>s.length>n?s.slice(0,n-1).replace(/\s+\S*$/,'')+'…':s,
@@ -183,7 +184,8 @@ function feat(i){
 const util=(i,f)=>{const W=PR.W;let u=V.c*sg(dot(W.c,f))+V.l*sg(dot(W.l,f))+V.s*sg(dot(W.s,f))+V.k*sg(dot(W.k,f));return PR.seen[i.id]?u*.3:u};
 // candidate pool -> multi-objective score -> one story per cluster -> diversity re-rank (MMR) with exploration slots
 function rank(items,cap,vid){
- let C=[];for(const i of items){if(!!i.v!==vid||PR.hid.includes(i.id))continue;const f=feat(i);if(f)C.push({i,f,u:util(i,f)})}
+ const TS=tasteScores(PR.tv,items.filter(i=>!!i.v===vid)),TW=Math.min(1,(PR.tn||0)/8); // taste counts more once we have seen ~8 positive signals
+ let C=[];for(const i of items){if(!!i.v!==vid||PR.hid.includes(i.id))continue;const f=feat(i);if(f){const tb=(TS.get(i.id)||0)*TW;C.push({i,f,u:util(i,f)+.9*tb,tb})}}
  const best=new Map();for(const c of C){const k=vid?c.i.id:c.i.c,b=best.get(k);if(!b||c.u>b.u)best.set(k,c)}
  C=[...best.values()].sort((a,b)=>b.u-a.u);
  const mean=C.slice(0,50).reduce((s,c)=>s+c.u,0)/Math.max(1,Math.min(50,C.length)),main=C.slice(0,cap*3),
@@ -200,6 +202,7 @@ function learn(i,lab,d,soft){const f=feat(i);
  if(f)for(const h in lab){const w=PR.W[h],p=sg(dot(w,f));for(let j=0;j<9;j++)w[j]+=.08*(lab[h]-p)*f[j]-.002*(w[j]-W0[h][j])}
  i.k.slice(0,3).forEach((id,j)=>{if(!soft||!P.sel.includes(id))PR.c[id]=cl((PR.c[id]||0)+d*POS[j],-3,3)});
  if(!soft)for(const t of new Set(toks(i.t)))PR.w[t]=cl((PR.w[t]||0)+d*.25,-2,2);
+ if(!soft&&Array.isArray(i.embedding)){PR.tv=updateTaste(PR.tv,i.embedding,cl(d/1.5,-1,1));if(d>0)PR.tn=(PR.tn||0)+1} // taste vector: meaning-based personalization
  PR.s[i.s]=cl((PR.s[i.s]||0)+d*(soft?.15:.4),-2,2);PR.n++;
  const ks=Object.keys(PR.w);if(ks.length>400)ks.sort((a,b)=>Math.abs(PR.w[a])-Math.abs(PR.w[b])).slice(0,100).forEach(k=>delete PR.w[k]);
  const sk=Object.keys(PR.seen);if(sk.length>1500)sk.sort((a,b)=>PR.seen[a]-PR.seen[b]).slice(0,500).forEach(k=>delete PR.seen[k]);
@@ -211,10 +214,10 @@ const list=()=>PF==='all'?READ:READ.filter(c=>c.i.p===PF),
 chips=i=>{const g=[...(i.g||[]),...(i.m||[])].find(g=>P.geos.some(u=>inGeo(g,u))),m=i.k.filter(k=>P.sel.includes(k)).slice(0,3);return(g?`<span>${esc(cname(g))}</span>`:'')+(m.length?m:i.k.slice(0,1)).map(k=>`<span>${esc(LBL[k])}</span>`).join('')},
 eng=i=>i.p==='y'?fmt(i.e||0)+' views':i.p==='r'||i.p==='h'?'▲ '+fmt(i.e||0):'';
 function cardR(c){const i=c.i,n=i.k.filter(k=>P.sel.includes(k)).length,t=c.ex?'<span class="tag ex">Explore</span>':`<span class="tag mt">${n>1?'Touches '+n+' interests':'Match '+Math.max(1,Math.round(100*Math.max(0,c.u)/MAXU))+'%'}</span>`;
- return`<article class="card item" data-id="${i.id}"><div class="ct"><span class="tag">${PL[i.p]||'News'}</span><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.x?`<p>${esc(short(i.x,200))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" class="${PR.lk.includes(i.id)?'on':''}">♥ Like</button><button data-a="save" class="${PR.sv.includes(i.id)?'on':''}">⚑ Save</button><button data-a="hide">✕ Less like this</button></span></div></article>`}
-function cardV(c){const i=c.i;return`<div class="vc" data-id="${i.id}" data-a="vp" role="button" tabindex="0"><div class="th"><img src="https://i.ytimg.com/vi/${encodeURIComponent(i.vid)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><span class="pb">▶</span></div><h4>${esc(i.t)}</h4><small>${esc(i.s)} · ${fmt(i.e||0)} views · ${ago(i.d*1000)}</small><div class="chips sm">${c.ex?'<span>Explore</span>':''}${chips(i)}</div></div>`}
+ return`<article class="card item" data-id="${i.id}"><div class="ct"><span class="tag">${PL[i.p]||'News'}</span><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.summary?`<p class="sm">${esc(i.summary)}</p>${i.why_it_matters?`<p class="why"><b>Why it matters</b>${esc(i.why_it_matters)}</p>`:''}`:i.x?`<p>${esc(short(i.x,200))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" class="${PR.lk.includes(i.id)?'on':''}">♥ Like</button><button data-a="save" class="${PR.sv.includes(i.id)?'on':''}">⚑ Save</button><button data-a="hide">✕ Less like this</button></span></div></article>`}
+function cardV(c){const i=c.i;return`<div class="vc" data-id="${i.id}" data-a="vp" role="button" tabindex="0"><div class="th"><img src="https://i.ytimg.com/vi/${encodeURIComponent(i.vid)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><span class="pb">▶</span></div><h4>${esc(i.t)}</h4>${i.summary?`<p class="vn">${esc(short(i.summary,170))}</p>`:''}${i.why_it_matters?`<p class="why">${esc(i.why_it_matters)}</p>`:''}<small>${esc(i.s)} · ${fmt(i.e||0)} views · ${ago(i.d*1000)}</small><div class="chips sm">${c.ex?'<span>Explore</span>':c.tb>.4?'<span>Like your picks</span>':''}${chips(i)}</div></div>`}
 function shell(tab){let b=$('#home .brand')?.outerHTML||'<span class="brand serif">BingleSignal</span>';b=b.replace('id="g"','id="g2"').replace('url(#g)','url(#g2)');
- $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a><a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a></nav><div class="hdr-r"><a class="link" href="#/onboarding">Brief settings</a><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
+ $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a>${BS.emailBeta?`<a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a>`:''}</nav><div class="hdr-r"><a class="link" href="#/onboarding">Brief settings</a><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
 function summary(n,total){return`<section class="sum"><div class="eyebrow">${TAB==='read'?'Read':'Watch'} · ranked for you</div><h1 class="serif">${P.name?esc(P.name)+', your':'Your'} ${TAB==='read'?'reading list':'video queue'}</h1><div class="chips sm">${P.geos.map(g=>`<span>${esc(cname(g))}</span>`).join('')}${P.sel.slice(0,8).map(id=>`<span>${esc(LBL[id])}</span>`).join('')}${P.sel.length>8?`<span>+${P.sel.length-8} more</span>`:''}</div><small>${n} ranked from ${total} candidates · feed built ${POOL.gen?ago(POOL.gen*1000):'just now'} · it learns from every like, hide, skip and watch</small></section>`}
 function empty(){return`<div class="card end">Your personal feed is being prepared. The first edition appears within a few minutes of the first automatic build - please check back shortly.</div>`}
 function renderRead(){
@@ -254,7 +257,8 @@ async function recordEditionCompletion(){
  }catch(error){console.warn('Edition completion event failed',{status_code:error.statusCode||0})}
 }
 function renderWatch(){
- const W=rank(POOL.items,BS.watchCap||30,true);
+ const cap=BS.watchCap||30,W=capPerKey(rank(POOL.items,cap+12,true),c=>c.i.s,3).slice(0,cap); // at most 3 videos per channel up front
+
  $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
 async function emailApi(path,method='GET',body){
  let access=await token();if(!access)throw new Error('Your sign-in expired. Please sign in again.');
@@ -404,6 +408,7 @@ export async function route(){
  if(/^#\/(pricing|paused|account)(\/|$)/.test(location.hash))return;
  if(r==='ok'){await entered();return}
  if(r)openAuth('Sign-in did not complete: '+r,'in');
+ if(/^#\/email(?:\?|$)/.test(location.hash)&&!BS.emailBeta){location.hash='#/me/read';return}
  if(/^#\/email(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to use the invited email beta.','in');return}
   home.hidden=true;app.hidden=false;shell('email');$('#am').innerHTML='<div class="end">Loading email beta…</div>';await renderEmailBeta();scrollTo(0,0);return}
  if(/^#\/onboarding(?:\?|$)/.test(location.hash)){const home=$('#home'),app=$('#app');if(!S){home.hidden=false;app.hidden=true;openAuth('Sign in to personalize your briefing.','in');return}

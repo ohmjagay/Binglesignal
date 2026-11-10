@@ -10,3 +10,5 @@
 8. Add no Worker runtime dependencies except `postal-mime`. GitHub Actions scripts may use dependencies when needed.
 9. Add or update automated tests for every change, and run `npm test` after each task. Do not mark a task done while tests fail.
 10. Keep code clear and small, with comments for non-developers where useful. Do not add AdSense or third-party scripts to authenticated pages.
+11. DeepSeek is the only AI provider (`worker/src/deepseek.js`). Never add Anthropic or OpenAI calls. Keep DeepSeek thinking mode disabled for JSON jobs. Embeddings stay on Cloudflare Workers AI because DeepSeek has no embeddings API. Send the model only public news text (or email text the user explicitly consented to), never account data.
+12. Razorpay is the only payment rail and there is one plan (BingleSignal Briefing, stored as plan `lite`). Legacy `pro` and `global` code paths exist only so old subscribers keep working.

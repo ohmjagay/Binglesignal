@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import worker, { verifyRazorpay, verifyStandardWebhook, mapRazorpay, mapGlobal } from '../src/index.js';
+import worker, { verifyRazorpay, verifyStandardWebhook, mapRazorpay, mapGlobal, teaserItems, razorpayRails } from '../src/index.js';
 import { betaTestReport, handleEmailRequest, isValidBetaSchedule } from '../src/email-beta.js';
 
 const env = {
@@ -49,20 +49,18 @@ test('Public pricing is centralized and uses the current INR and USD plan amount
   const context = { window: {} };
   runInNewContext(config, context);
   const prices = JSON.parse(JSON.stringify(context.window.BS.prices));
-  assert.deepEqual(prices, {
-    IN: { c: '₹', lite: { month: '299', year: '2,999' }, pro: { month: '799', year: '7,999' } },
-    GL: { c: '$', lite: { month: '5', year: '50' }, pro: { month: '11', year: '110' } },
-  });
+  assert.deepEqual(prices, { IN: { c: '₹', month: '299' }, GL: { c: '$', month: '5' } });
   const premium = await readFile(new URL('../../public/premium.js', import.meta.url), 'utf8');
   assert.match(premium, /const PRICE = BS\.prices;/);
   assert.doesNotMatch(premium, /\$2\.99|\$5\.99|month: '99'/);
   const vars = await readFile(new URL('../../.dev.vars.example', import.meta.url), 'utf8');
   for (const variable of [
+    'RAZORPAY_PLAN_LITE_MONTHLY',
     'RAZORPAY_PLAN_LITE_MONTHLY_USD',
-    'RAZORPAY_PLAN_PRO_MONTHLY_USD',
-    'RAZORPAY_PLAN_LITE_YEARLY_USD',
-    'RAZORPAY_PLAN_PRO_YEARLY_USD',
+    'DEEPSEEK_API_KEY',
+    'DEEPSEEK_MODEL',
   ]) assert.match(vars, new RegExp(`^${variable}=`, 'm'));
+  assert.doesNotMatch(vars, /^EMAIL_AI_(PROVIDER|ENDPOINT|API_KEY|MODEL)=/m);
   const index = await readFile(new URL('../../public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(index, /pagead2\.googlesyndication\.com|adsbygoogle/i);
 });
@@ -196,11 +194,11 @@ test('Checkout (India): Razorpay subscription is created and the unused trial is
     'select=status,trial_ends_at': () => Response.json([{ status: 'trialing', trial_ends_at: new Date(trialEnd).toISOString() }]),
     'api.razorpay.com': () => Response.json({ id: 'sub_new', short_url: 'https://rzp.io/i/abc' }),
   });
-  const res = await worker.fetch(post('/api/checkout', { plan: 'pro', interval: 'month', currency: 'INR' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'IN' }), env);
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'INR' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'IN' }), env);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { provider: 'razorpay', key_id: 'rzp_test_1', subscription_id: 'sub_new', short_url: 'https://rzp.io/i/abc' });
   const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
-  assert.equal(rz.body.plan_id, 'plan_pro_m');
+  assert.equal(rz.body.plan_id, 'plan_lite_m');
   assert.equal(rz.body.notes.user_id, USER.id);
   assert.equal(rz.body.start_at, Math.floor(trialEnd / 1000));
   assert.ok(rz.body.expire_by > Math.floor(Date.now() / 1000));
@@ -208,16 +206,51 @@ test('Checkout (India): Razorpay subscription is created and the unused trial is
   assert.equal(rz.init.headers.authorization, 'Basic ' + btoa('rzp_test_1:secret'));
 });
 
-test('Checkout (outside India): returns the hosted payment link carrying email + user id', async () => {
-  fakeNetwork({
+test('Checkout (outside India): the same single plan is sold in USD through Razorpay', async () => {
+  const calls = fakeNetwork({
     '/auth/v1/user': () => Response.json(USER),
     '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
     '/rpc/finish_payment_checkout': () => Response.json(true),
+    'select=status,trial_ends_at': () => Response.json([]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_x', short_url: 'https://rzp.io/i/x' }),
   });
-  const res = await worker.fetch(post('/api/checkout', { plan: 'pro', interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
-  const out = await res.json();
-  assert.equal(out.provider, 'global');
-  assert.match(out.url, /^https:\/\/pay\.example\.com\/pro\?email=Ria%40Example\.com&metadata_user_id=aaaaaaaa-0000/);
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { provider: 'razorpay', key_id: 'rzp_test_1', subscription_id: 'sub_x', short_url: 'https://rzp.io/i/x' });
+  const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
+  assert.equal(rz.body.plan_id, 'plan_lite_usd_m');
+  assert.equal(rz.body.notes.currency, 'USD');
+  assert.equal(calls.some((c) => c.url.includes('pay.example.com')), false);
+});
+
+test('Checkout always sells the one monthly plan, whatever plan or period the browser asks for', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/finish_payment_checkout': () => Response.json(true),
+    'select=status,trial_ends_at': () => Response.json([]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_x', short_url: 'https://rzp.io/i/x' }),
+  });
+  const headers = { authorization: 'Bearer jwt', 'cf-ipcountry': 'IN' };
+  const res = await worker.fetch(post('/api/checkout', { plan: 'pro', currency: 'INR' }, headers), env);
+  assert.equal(res.status, 200);
+  const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
+  assert.equal(rz.body.plan_id, 'plan_lite_m');
+  assert.equal(rz.body.notes.plan, 'lite');
+  assert.equal(rz.body.notes.interval, 'month');
+  assert.equal(rz.body.total_count, 120);
+  const before = calls.length;
+  const yearly = await worker.fetch(post('/api/checkout', { interval: 'year', currency: 'INR' }, headers), env);
+  assert.equal(yearly.status, 400);
+  assert.equal(calls.slice(before).some((c) => c.url.includes('/rpc/') || c.url.includes('api.razorpay.com')), false);
+});
+
+test('Checkout says so, and reserves nothing, when the Razorpay plan for the currency is not configured', async () => {
+  const calls = fakeNetwork({ '/auth/v1/user': () => Response.json(USER) });
+  const res = await worker.fetch(post('/api/checkout', { currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }),
+    { ...env, RAZORPAY_PLAN_LITE_MONTHLY_USD: '' });
+  assert.equal(res.status, 503);
+  assert.equal(calls.some((c) => c.url.includes('/rpc/reserve_payment_checkout')), false);
 });
 
 test('Checkout returns the reserved URL instead of creating a second provider checkout', async () => {
@@ -291,26 +324,42 @@ test('Health endpoint reports the visitor country (pricing page uses it to show 
   assert.equal((await res.json()).country, 'IN');
 });
 
-test('Health says which payment rails are configured and never exposes a secret', async () => {
-  const full = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), { ...env, RAZORPAY_PLAN_PRO_MONTHLY: 'p', RAZORPAY_PLAN_LITE_MONTHLY: 'l', GLOBAL_LINK_LITE_MONTH: 'x' })).json();
-  assert.deepEqual(full.rails, { razorpay: true, global: true });
+test('Health says which Razorpay plans are configured and never exposes a secret', async () => {
+  const full = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), env)).json();
+  assert.deepEqual(full.rails, { razorpay: true, razorpay_inr: true, razorpay_usd: true });
+  assert.equal(JSON.stringify(full).includes('secret'), false);
+  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_PLAN_LITE_MONTHLY_USD: '' }), { razorpay: true, razorpay_inr: true, razorpay_usd: false });
+  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_KEY_SECRET: '' }), { razorpay: false, razorpay_inr: false, razorpay_usd: false });
   const empty = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), {})).json();
-  assert.deepEqual(empty.rails, { razorpay: false, global: false });
+  assert.deepEqual(empty.rails, { razorpay: false, razorpay_inr: false, razorpay_usd: false });
 });
 
-test('Cancel (Razorpay) cancels at cycle end and marks the row; no login -> 401; international -> manual path', async () => {
-  const calls = fakeNetwork({
-    '/auth/v1/user': () => Response.json(USER),
-    'select=provider,provider_subscription_id': () => Response.json([{ provider: 'razorpay', provider_subscription_id: 'sub_9', status: 'active', current_period_end: '2026-12-01T00:00:00Z' }]),
-    'api.razorpay.com': () => Response.json({ id: 'sub_9' }),
-  });
+const teaserCluster = (id, q, extra = {}) => ({ story_id: id, source_count: 3, stories: [{
+  id: `${id}-a`, t: `Headline ${id}`, u: `https://news.example/${id}`, s: 'Example News', d: 1793000000, k: ['business'], q, g: ['IN'], ...extra,
+}] });
 
-  const res = await worker.fetch(post('/api/cancel', {}, { authorization: 'Bearer jwt' }), env);
+test('Teaser items are headline-only, best first, and skip videos and unsafe links', () => {
+  const items = teaserItems([
+    teaserCluster('low', 0.2), teaserCluster('high', 0.9), teaserCluster('mid', 0.5),
+    teaserCluster('video', 0.99, { v: 1, vid: 'abc' }),
+    teaserCluster('badlink', 0.8, { u: 'javascript:alert(1)' }),
+  ], 2);
+  assert.deepEqual(items.map((item) => item.c), ['high', 'mid']);
+  assert.deepEqual(Object.keys(items[0]).sort(), ['c', 'd', 'id', 'k', 'n', 'q', 'r', 's', 't', 'u']);
+  assert.equal(items[0].r, 'IN');
+  assert.equal(items[0].d, new Date(1793000000 * 1000).toISOString());
+});
+
+test('GET /api/teaser serves a cacheable teaser from Supabase and fails soft when there is nothing to show', async () => {
+  fakeNetwork({ story_clusters: () => Response.json([teaserCluster('a', 0.7), teaserCluster('b', 0.4)]) });
+  const res = await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env);
   assert.equal(res.status, 200);
-  assert.equal(calls.find((c) => c.url.includes('/sub_9/cancel')).body.cancel_at_cycle_end, 1);
-  assert.equal(calls.find((c) => c.init.method === 'PATCH').body.cancel_at_period_end, true);
-  fakeNetwork();
-  assert.equal((await worker.fetch(post('/api/cancel', {}), env)).status, 401);
-  fakeNetwork({ '/auth/v1/user': () => Response.json(USER), 'select=provider,provider_subscription_id': () => Response.json([{ provider: 'global', provider_subscription_id: 'sub_g', status: 'active' }]) });
-  assert.equal((await (await worker.fetch(post('/api/cancel', {}, { authorization: 'Bearer jwt' }), env)).json()).manual, true);
+  assert.match(res.headers.get('cache-control'), /public, max-age=300/);
+  const body = await res.json();
+  assert.equal(body.n, 2);
+  assert.equal(body.items[0].c, 'a');
+  fakeNetwork({ story_clusters: () => Response.json([]) });
+  assert.equal((await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env)).status, 503);
+  fakeNetwork({ story_clusters: () => new Response('boom', { status: 500 }) });
+  assert.equal((await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env)).status, 503);
 });

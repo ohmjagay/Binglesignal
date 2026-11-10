@@ -12,6 +12,8 @@ binding = "AI"
 
 [triggers]
 # JOB_CRON = '* * * * *' in worker/src/email-beta.js drives email job processing; keep this trigger aligned.
+# The email beta is paused with EMAIL_BETA_ENABLED=false, which turns the email jobs on these triggers into instant no-ops.
+# Only the */15 trigger does real work today: it composes due daily editions and runs lifecycle jobs.
 crons = ["0 */6 * * *", "* * * * *", "*/15 * * * *"]
 
 [[durable_objects.bindings]]

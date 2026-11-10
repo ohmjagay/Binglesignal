@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'public/**/*.js'
+      - 'public/**/*.json'
       - 'public/**/*.html'
       - 'scripts/**'
       - 'worker/**'
@@ -21,6 +22,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Static data files are valid JSON (catches Git merge-conflict markers)
+        run: node -e "for (const f of ['public/feed.json']) { JSON.parse(require('fs').readFileSync(f, 'utf8')); console.log('valid JSON:', f); }"
       - name: JavaScript has no syntax errors
         run: |
           for f in public/*.js scripts/*.mjs worker/src/*.js; do
@@ -28,6 +33,5 @@ jobs:
             echo "checking $f"
             node --check "$f"
           done
-      - name: Payments Worker tests
-        run: |
-          if [ -f worker/tests/worker.test.mjs ]; then node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs; else echo "no worker tests yet"; fi
+      - name: All automated tests
+        run: npm test

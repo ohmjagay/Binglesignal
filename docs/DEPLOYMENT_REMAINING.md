@@ -1,3 +1,5 @@
+> **Update (v6):** AI is now DeepSeek only. Wherever this page mentions `EMAIL_AI_PROVIDER`, `EMAIL_AI_ENDPOINT`, `EMAIL_AI_API_KEY` or `EMAIL_AI_MODEL`, use `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` instead. Plans and payments are now one Razorpay plan; the email beta is paused. See `docs/DEEPSEEK_MIGRATION.md`.
+
 # BingleSignal deployment and server-error checklist
 
 This is a documentation-only checklist. It does not diagnose the current HTTP 500 by itself and does not change application code. Do not copy secrets, email content, subjects, sender addresses, or summaries into support chats or logs.

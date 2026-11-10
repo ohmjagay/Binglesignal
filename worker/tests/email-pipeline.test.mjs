@@ -132,9 +132,9 @@ test('100 synthetic messages including 10 injection attempts retain strict struc
   assert.equal(samples.length, 100);
   assert.equal(samples.filter((email) => email.text.startsWith('Synthetic content') && email.text.includes('Ignore all rules')).length, 10);
   const env = {
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'test-key',
-    EMAIL_AI_MODEL: 'test-model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'test-key',
+    DEEPSEEK_MODEL: 'test-model',
     EMAIL_AI_MONTHLY_BUDGET_EXCEEDED: 'false',
     EMAIL_AI_BUDGET: {
       idFromName: () => 'budget',

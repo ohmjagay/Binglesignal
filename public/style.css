@@ -98,3 +98,10 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{overflow-x:clip;pa
  .plans{grid-template-columns:1fr}.pxw{padding:0 14px 50px}.price b{font-size:38px}
 }
 @media(max-width:380px){.brand{font-size:17px}.hdr-r .btn.sm{padding:7px 12px}.tog button{padding:8px 11px;font-size:13px}}
+/* v6: summaries, "why it matters" lines and watch notes */
+.item p.sm{color:var(--tx);opacity:.92;margin:8px 0 6px;line-height:1.55}
+.item p.why,.vc p.why{color:var(--mu);font-size:13.5px;margin:2px 0 6px}
+.item p.why b,.vc p.why b{color:var(--gd);font-weight:600;margin-right:6px}
+.vc p.vn{color:#B7C5DA;font-size:13.5px;margin:2px 0 4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.vc p.why{font-size:12.5px;margin:0 0 6px}
+.plans{grid-template-columns:minmax(0,520px);justify-content:center}

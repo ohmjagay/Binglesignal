@@ -1,8 +1,11 @@
-// BingleSignal ingest engine v5. Public story data is written to Supabase; only a teaser remains public.
+// BingleSignal ingest engine v6. Public story data is written to Supabase; only a teaser remains public.
+// Story notes (summaries) are written by DeepSeek. If the AI is unavailable the stories are still published without notes.
 import {writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {CATS,CC,EUROPE,cname} from '../public/taxonomy.js';
 import {summarizeStory} from './story-summary.mjs';
+import {fetchArticleText} from './article-text.mjs';
+import {DeepSeekError} from '../worker/src/deepseek.js';
 const [G,I,U,E]=['GL','IN','US','EU'],UA='Mozilla/5.0 (compatible; BingleSignalBot/5.0; +https://binglesignal.com)',HL={n:14,r:20,h:16,b:48,y:96};
 // Publisher feeds: ['feed url','Source',region,'default topics',trust 0-1]. Add or remove lines freely.
 const FEEDS=[
@@ -177,7 +180,7 @@ async function pull([url,s,r,top,tr=.75,p='n',pw=.85]){
    let src=s;const so=b.match(/<source[^>]*>([\s\S]*?)<\/source>/i);
    if(so){src=txt(so[1])||s;t=t.replace(new RegExp('\\s+-\\s+'+rxEsc(src)+'$'),'')}
    let x=txt(tag(b,'description')||tag(b,'summary')||tag(b,'content:encoded')||tag(b,'media:description')||tag(b,'content')).replace(/\s*The post .{0,200}appeared first on .*$/i,'').replace(/submitted by.*$/i,'');
-   x=x.length<40||x.startsWith(t)?'':x.length>240?x.slice(0,239).replace(/\s+\S*$/,'')+'…':x;
+   const lim=p==='y'?600:240;x=x.length<40||x.startsWith(t)?'':x.length>lim?x.slice(0,lim-1).replace(/\s+\S*$/,'')+'…':x;
    const it={id:uid(u),t,u,s:src,d:new Date(Math.min(d,Date.now())).toISOString(),r,top,x,i:img(b),p,pw,tr};
    if(p==='y'){it.v=1;it.vid=txt(tag(b,'yt:videoId'));it.e=+((b.match(/<media:statistics views="(\d+)"/)||[])[1]||0);if(!it.vid)continue}
    if(p==='r')it.e=Math.max(10,(26-idx)*12);
@@ -198,7 +201,7 @@ async function pullYT(){
   const st={},ids=[...new Set(rs.map(x=>x.v.id.videoId))];
   for(let k=0;k<ids.length;k+=50){try{const j=await(await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${ids.slice(k,k+50).join(',')}&key=${key}`)).json();for(const v of j.items||[])st[v.id]=+v.statistics.viewCount||0}catch{}}
   console.log('ok   YouTube keyword search',rs.length);
-  return rs.map(({c,v})=>{const u='https://www.youtube.com/watch?v='+v.id.videoId;return{id:uid(u),t:txt(v.snippet.title),u,s:txt(v.snippet.channelTitle),d:v.snippet.publishedAt,r:G,top:c,x:txt(v.snippet.description).slice(0,200),i:'',p:'y',pw:1.1,tr:.6,v:1,vid:v.id.videoId,e:st[v.id.videoId]||0}})
+  return rs.map(({c,v})=>{const u='https://www.youtube.com/watch?v='+v.id.videoId;return{id:uid(u),t:txt(v.snippet.title),u,s:txt(v.snippet.channelTitle),d:v.snippet.publishedAt,r:G,top:c,x:txt(v.snippet.description).slice(0,500),i:'',p:'y',pw:1.1,tr:.6,v:1,vid:v.id.videoId,e:st[v.id.videoId]||0}})
  }catch(e){console.log('skip YouTube search',e.message);return[]}}
 async function pmap(rows,fn,n=12){const out=[];let i=0;await Promise.all(Array.from({length:n},async()=>{while(i<rows.length){const j=i++;out[j]=await fn(rows[j])}}));return out}
 if(process.argv.includes('--check-feeds')){
@@ -278,22 +281,40 @@ const oldNotes=(await Promise.all(noteLookups.map(group=>apiRequest(
  `/rest/v1/story_notes?select=story_id,headline,summary,why_it_matters,do_next,category,entities,confidence,source_ids&story_id=in.(${group.map(row=>encodeURIComponent(row.story_id)).join(',')})`
 )))).flat();
 const notesById=new Map(oldNotes.map(note=>[note.story_id,note]));
-const notesToWrite=[];
-for(let offset=0;offset<clusterRows.length;offset+=8){
- const batch=clusterRows.slice(offset,offset+8);
- const generated=await pmap(batch,async cluster=>{
-  if(notesById.has(cluster.story_id))return null;
-  if(cluster.stories[0]?.v)return null;
-  const summary=await summarizeStory(cluster.stories);
-  if(!summary)throw new Error('Configure EMAIL_AI_API_KEY and the story summary provider before publishing');
-  return{story_id:cluster.story_id,headline:summary.headline,summary:summary.summary,why_it_matters:summary.why_it_matters,
-   do_next:null,category:summary.category.slice(0,40),entities:summary.entities.slice(0,12).map(value=>cleanText(value).slice(0,80)),
-   confidence:summary.confidence,source_ids:summary.source_ids,source_count:cluster.source_count,
-   sources:cluster.stories.map(item=>({name:item.s,url:item.u})),edition_at:new Date().toISOString()};
- });
+// ---- AI notes (DeepSeek). A failure here must never stop the feed: stories are always published, notes are added when the AI works.
+// Order: best stories first. The top DEEP stories are summarized from the real article text (never paywalled sites), the rest from headline + excerpt.
+const notesToWrite=[],aiOn=!!process.env.DEEPSEEK_API_KEY,startedAt=Date.now(),
+ AI_MS=+process.env.AI_TIME_BUDGET_MS||13*60e3,MAX_READ=+process.env.MAX_NEW_NOTES||500,DEEP=+process.env.DEEP_SUMMARY_TOP||120,MAX_VIDEO=+process.env.MAX_VIDEO_NOTES||150;
+const todo=clusterRows.filter(c=>c.stories.length&&!notesById.has(c.story_id)).sort((a,b)=>(b.stories[0].q||0)-(a.stories[0].q||0));
+const queue=[...todo.filter(c=>!c.stories[0].v).slice(0,MAX_READ).map((cluster,index)=>({cluster,deep:index<DEEP})),
+ ...todo.filter(c=>c.stories[0].v).slice(0,MAX_VIDEO).map(cluster=>({cluster,deep:false}))];
+let aiStop=aiOn?'':'DEEPSEEK_API_KEY is not set',aiFailures=0,aiStreak=0,tokensIn=0,tokensOut=0,deepCount=0;
+if(!aiOn)console.log('skip story notes: DEEPSEEK_API_KEY is not set (stories are still published)');
+const withBodies=async stories=>{const pick=stories.filter(story=>!story.v).sort((a,b)=>(a.source_tier||4)-(b.source_tier||4)).slice(0,2);
+ await Promise.all(pick.map(async story=>{story.body=await fetchArticleText(story.u)}));return stories};
+for(let offset=0;offset<queue.length&&!aiStop;offset+=8){
+ if(Date.now()-startedAt>AI_MS){aiStop='time budget reached; the rest is summarized on the next run';break}
+ const generated=await pmap(queue.slice(offset,offset+8),async({cluster,deep})=>{
+  if(aiStop)return null;
+  try{
+   const stories=cluster.stories.slice(0,6).map(story=>({...story}));
+   if(deep)await withBodies(stories);
+   const summary=await summarizeStory(stories);
+   if(!summary)return null;
+   aiStreak=0;tokensIn+=summary.usage.inputTokens;tokensOut+=summary.usage.outputTokens;if(stories.some(story=>story.body))deepCount++;
+   return{story_id:cluster.story_id,headline:summary.headline,summary:summary.summary,why_it_matters:summary.why_it_matters,
+    do_next:null,category:summary.category.slice(0,40),entities:summary.entities.slice(0,12).map(value=>cleanText(value).slice(0,80)),
+    confidence:summary.confidence,source_ids:summary.source_ids,source_count:cluster.source_count,
+    sources:cluster.stories.map(item=>({name:item.s,url:item.u})),edition_at:new Date().toISOString()};
+  }catch(error){
+   if(error instanceof DeepSeekError&&error.fatal)aiStop=error.message;
+   else{aiFailures++;if(++aiStreak>=8)aiStop='8 requests in a row failed: '+error.message;console.log('skip note',cluster.story_id,error.message)}
+   return null}
+ },8);
  notesToWrite.push(...generated.filter(Boolean));
- if(offset+8<clusterRows.length)await wait(250);
 }
+if(aiOn)console.log(`AI notes: ${notesToWrite.length} new (${deepCount} from full article text), ${aiFailures} failed, ${queue.length-notesToWrite.length-aiFailures} left for the next run; tokens in ${tokensIn} / out ${tokensOut}`);
+if(aiStop)console.error('AI notes stopped:',aiStop);
 for(let offset=0;offset<clusterRows.length;offset+=100){
  await apiRequest('/rest/v1/story_clusters?on_conflict=story_id',{method:'POST',headers:{prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(clusterRows.slice(offset,offset+100))});
 }
@@ -302,5 +323,9 @@ for(let offset=0;offset<notesToWrite.length;offset+=100){
 }
 await apiRequest(`/rest/v1/story_clusters?expires_at=lt.${encodeURIComponent(new Date(now).toISOString())}`,{method:'DELETE',headers:{prefer:'return=minimal'}});
 const feed=keep(reads.filter(a=>a.p!=='r'),4,30).map(a=>({id:a.id,t:a.t,u:a.u,s:a.s,d:new Date(a.d).toISOString(),r:hreg(a.r),k:a.k,c:a.c,n:a.n,q:a.q}));
-await writeFile('public/feed.json',JSON.stringify({v:5,gen:new Date(now).toISOString(),n:feed.length,items:feed}));
+// The public teaser is now served live by the Worker at /api/teaser. The static file is only a fallback and is written on request:
+//   node scripts/ingest.mjs --write-teaser
+if(process.argv.includes('--write-teaser'))await writeFile('public/feed.json',JSON.stringify({v:5,gen:new Date(now).toISOString(),n:feed.length,items:feed}));
 console.log(`Supabase story clusters updated: ${clusterRows.length}; new notes: ${notesToWrite.length}; public teaser: ${feed.length}`);
+// Everything is published by now. Turn the run red (GitHub emails you) if the AI stopped for a reason you must fix: bad key, empty balance, wrong model.
+if(aiStop&&!/time budget/.test(aiStop))process.exitCode=1;

@@ -93,4 +93,6 @@ document.addEventListener('bs:prefs',()=>{stage=1;render()});
 const n=new Date();
 $('#dt').textContent=n.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 render();
-fetch('feed.json').then(r=>{if(!r.ok)throw 0;return r.json()}).then(j=>{D=(j.items||[]).filter(a=>a&&a.t&&a.u&&a.c&&Array.isArray(a.k));GEN=j.gen||Date.now()}).catch(()=>{}).then(()=>{ready=true;render()});
+// Live teaser from the Worker first, the static file as a backup, so a broken or stale file can never blank the homepage.
+const loadFeed=async()=>{for(const url of['/api/teaser','feed.json']){try{const r=await fetch(url);if(!r.ok)continue;const j=await r.json(),items=(j.items||[]).filter(a=>a&&a.t&&a.u&&a.c&&Array.isArray(a.k));if(items.length)return{items,gen:j.gen}}catch{}}return null};
+loadFeed().then(j=>{if(j){D=j.items;GEN=j.gen||Date.now()}}).then(()=>{ready=true;render()});

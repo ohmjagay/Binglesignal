@@ -5,10 +5,13 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
 const PRICE = BS.prices;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
-const FEATS = {
-  lite: [['Finite daily edition, all topics and regions', 1], ['READ list of 40 stories and WATCH list of 8 videos', 1], ['Original source and source count on stories', 1], ['"Why it matters" line on top stories', 0], ['30-day archive search', 0]],
-  pro: [['Everything in Lite', 1], ['Endless mix: READ list of 200 and WATCH list of 30', 1], ['Watchlist alerts', 0], ['Meeting prep packs', 0], ['3 Deep Dives a month', 0], ['365-day archive search', 0]],
-};
+const PLAN_NAME = 'BingleSignal Briefing';
+const FEATS = [
+  ['A finite daily briefing, rebuilt every 6 hours around your interests and region', 1],
+  ['READ: a clear summary of every story plus a "why it matters" line, with the original source one click away', 1],
+  ['WATCH: video picks with a short note on what each one covers, ranked by what you actually watch', 1],
+  ['A feed that learns from every like, save, hide, skip and watch', 1],
+];
 let ACC = null, ENVI = null, INT = 'month', CUR = null, busy = false, pendingMfaEnrollment = null;
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
@@ -36,7 +39,7 @@ async function loadAccessNow() {
     const r = await fetch(SB + '/rest/v1/rpc/my_access', { method: 'POST', headers: { apikey: KEY, 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: '{}' });
     if (!r.ok) throw new Error(String(r.status));
     ACC = await r.json();
-    if (ACC.features) { BS.readCap = ACC.features.read_cap; BS.watchCap = ACC.features.watch_cap; }
+    // One plan means one set of limits: READ and WATCH sizes come from config.js (readCap / watchCap) for everyone.
   } catch { ACC = null; }
   paintBanner();
   // the feed may already be on screen with the old caps: draw it again once
@@ -51,7 +54,7 @@ const loadAccess = () => { if (!inflight) inflight = loadAccessNow().finally(() 
 function paintBanner() {
   const b = $('#bn'); if (!b) return;
   const a = ACC; let m = '';
-  if (a?.status === 'trialing') m = `<span><b>Pro trial</b> · ${a.days_left} day${a.days_left === 1 ? '' : 's'} left · no card needed</span><a class="btn sm" href="#/pricing">Choose a plan</a>`;
+  if (a?.status === 'trialing') m = `<span><b>Free trial</b> · ${a.days_left} day${a.days_left === 1 ? '' : 's'} left · no card needed</span><a class="btn sm" href="#/pricing">Subscribe</a>`;
   else if (a?.status === 'past_due') m = '<span><b>Payment problem.</b> Please update your payment method to keep your plan.</span><a class="btn sm" href="#/account">Manage plan</a>';
   else if (a?.status === 'canceled' && a.has_access) m = `<span>Your plan ends on <b>${fd(a.current_period_end)}</b>.</span><a class="btn sm" href="#/pricing">Renew</a>`;
   b.innerHTML = m; b.hidden = !m;
@@ -66,46 +69,33 @@ function frame(inner) {
 
 async function pricing() {
   const e = await env(), localRegion = region(e), R = CUR || localRegion;
-  const rail = R === 'IN' ? e.rails.razorpay : e.rails.global, P = PRICE[R];
-  const mine = ACC?.status === 'active' ? ACC.plan : null;
-  const card = (id, name, blurb, tag) => {
-    const per = INT === 'year' ? '/yr' : '/mo'; let cta;
-    const switching = ACC?.status === 'active' && mine && mine !== id;
-    if (!authed()) cta = '<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Pro features for 7 days, then choose a plan.</small>';
-    else if (mine === id) cta = '<button class="btn wide" disabled>Your current plan</button>';
-    else if (!rail) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running. We will email you before it ends.</small>';
-    else cta = `<button class="btn fill wide" data-plan="${id}">${switching ? `Switch to ${name}` : `Choose ${name}`}</button>`;
-    return `<article class="card plan${id === 'pro' ? ' hot' : ''}"><div class="eyebrow">${tag}</div><h2 class="serif">${name}</h2><p class="mu">${blurb}</p><div class="price"><span>${P.c}</span><b>${P[id][INT]}</b><small>${per}</small></div><ul>${FEATS[id].map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${R === 'IN' && authed() ? '<label class="gstin-field">GSTIN for an Indian business invoice (optional)<input id="gstin" maxlength="15" autocomplete="off" placeholder="15-character GSTIN"></label>' : ''}${cta}</article>`;
-  };
+  const rail = R === 'IN' ? e.rails.razorpay_inr : e.rails.razorpay_usd, P = PRICE[R];
+  const active = ACC?.status === 'active';
+  let cta;
+  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Then ${P.c}${P.month} a month.</small>`;
+  else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
+  else if (!rail) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running.</small>';
+  else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · ${P.c}${P.month}/month</button>`;
+  const gstin = R === 'IN' && authed() ? '<label class="gstin-field">GSTIN for an Indian business invoice (optional)<input id="gstin" maxlength="15" autocomplete="off" placeholder="15-character GSTIN"></label>' : '';
+  const card = `<article class="card plan hot"><div class="eyebrow">Daily briefing</div><h2 class="serif">${PLAN_NAME}</h2><p class="mu">The signal from today's news, summarised for you, with videos picked for how you watch.</p><div class="price"><span>${P.c}</span><b>${P.month}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${gstin}${cta}</article>`;
   const currencyToggle = localRegion === 'IN'
     ? `<div class="tog" role="group" aria-label="Billing currency"><button data-currency="IN" class="${R === 'IN' ? 'on' : ''}">INR</button><button data-currency="GL" class="${R === 'GL' ? 'on' : ''}">USD</button></div>`
     : '';
-  frame(`<section class="pxh"><h1 class="serif">Pick the depth that fits your day</h1><p class="tag">Every plan starts with a 7-day Pro trial. No card needed. Cancel any time.</p>${currencyToggle}<div class="tog" role="group" aria-label="Billing period"><button data-int="month" class="${INT === 'month' ? 'on' : ''}">Monthly</button><button data-int="year" class="${INT === 'year' ? 'on' : ''}">Yearly · 2 months free</button></div></section><div class="plans">${card('lite', 'Lite', 'The finite daily briefing for professionals.', 'Signal Desk')}${card('pro', 'Pro', 'The endless mix, plus tools for people who act on news.', 'Daily Mix')}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">Prices in ${R === 'IN' ? 'Indian rupees' : 'US dollars'}; applicable taxes are shown at checkout. Features marked <i>soon</i> are being built and join your plan at no extra cost. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+  frame(`<section class="pxh"><h1 class="serif">One plan. The whole briefing.</h1><p class="tag">Every account starts with a 7-day free trial. No card needed. Cancel any time.</p>${currencyToggle}</section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">Prices in ${R === 'IN' ? 'Indian rupees' : 'US dollars'}; applicable taxes are shown at checkout. Payments are processed by Razorpay. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
 
-async function checkout(plan) {
+async function checkout() {
   if (busy) return; busy = true; let opened = false;
   const msg = (t) => { const m = $('#pxmsg'); if (m) m.textContent = t; };
   try {
     const e = await env(), R = CUR || region(e), t = await window.BSAuth.token();
     const gstin = R === 'IN' ? $('#gstin')?.value?.trim() || '' : '';
-    const switching = ACC?.status === 'active' && ACC.plan && ACC.plan !== plan;
-    const endpoint = switching ? '/api/plan/switch' : '/api/checkout';
-    const payload = switching
-      ? { plan, apply_at: plan === 'pro' ? 'now' : 'cycle_end' }
-      : { plan, interval: INT, currency: R === 'IN' ? 'INR' : 'USD', gstin };
-    const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(payload) });
+    const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify({ interval: 'month', currency: R === 'IN' ? 'INR' : 'USD', gstin }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'checkout failed');
-    if (switching) {
-      msg(j.scheduled_for === 'now' ? 'Your Pro upgrade is being applied now.' : 'Your plan change is scheduled for the end of this billing period.');
-      await loadAccess();
-      busy = false;
-      return;
-    }
-    if (j.provider === 'global') { opened = true; location.href = j.url; return; }
+    if (j.provider === 'global') { opened = true; location.href = j.url; return; } // an old, still-open checkout from the previous provider
     await loadScript('https://checkout.razorpay.com/v1/checkout.js');
-    new window.Razorpay({ key: j.key_id, subscription_id: j.subscription_id, name: 'BingleSignal', description: (plan === 'pro' ? 'Pro' : 'Lite') + ' plan', prefill: { email: window.BSAuth.user()?.email || '' }, theme: { color: '#D4B46A' }, handler: () => { activating(); }, modal: { ondismiss: () => { busy = false; } } }).open();
+    new window.Razorpay({ key: j.key_id, subscription_id: j.subscription_id, name: 'BingleSignal', description: PLAN_NAME, prefill: { email: window.BSAuth.user()?.email || '' }, theme: { color: '#D4B46A' }, handler: () => { activating(); }, modal: { ondismiss: () => { busy = false; } } }).open();
     opened = true;
   } catch (err) { msg('Could not start checkout: ' + err.message + '. Please try again, or email us and we will set it up.'); }
   finally { if (!opened) busy = false; }
@@ -117,11 +107,24 @@ async function activating() {
   busy = false; location.hash = '#/account';
 }
 
+// Public headlines: live from the Worker first, the static file as a backup. Never throws.
+async function loadTeaser() {
+  for (const url of ['/api/teaser', 'feed.json']) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (Array.isArray(j.items) && j.items.length) return j;
+    } catch { /* try the next source */ }
+  }
+  return { items: [] };
+}
+
 async function paused() {
   if (!authed()) { location.hash = '#/'; return; }
   await acc.ready;
   if (!ACC || ACC.has_access) { location.hash = '#/me/read'; return; }
-  let tease = ''; try { const j = await (await fetch('feed.json')).json(); tease = (j.items || []).slice(0, 3).map((a) => `<li>${esc(a.t)}</li>`).join(''); } catch {}
+  const tease = ((await loadTeaser()).items || []).slice(0, 3).map((a) => `<li>${esc(a.t)}</li>`).join('');
   frame(`<section class="pxh"><h1 class="serif">Your briefing is paused</h1><p class="tag">Your 7-day trial has ended. Your settings are saved. Choose a plan to pick up where you left off.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
 }
 
@@ -143,13 +146,13 @@ async function loadUsageMetrics() {
 async function account() {
   if (!authed()) { location.hash = '#/me/read'; return; }
   await acc.ready; const a = ACC;
-  const label = { trialing: 'Free trial (Pro)', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Trial ended', none: 'No plan' };
+  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Trial ended', none: 'No plan' };
   let body = '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
   if (a) {
     const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`
-      : a.status === 'active' ? `${a.plan === 'pro' ? 'Pro' : 'Lite'} plan.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
+      : a.status === 'active' ? `Briefing plan.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
-    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p><a class="btn" href="#/pricing">${a.status === 'active' ? 'Change plan' : 'Choose a plan'}</a> ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
+    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '' : '<a class="btn" href="#/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
   frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">Loading your estimate…</p></section><section class="card"><h2 class="serif">Account security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
   await refreshMfaStatus();
@@ -165,9 +168,9 @@ async function refreshMfaStatus() {
     const verified = factors.some((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
     status.textContent = verified
       ? window.BSAuth.assurance() === 'aal2'
-        ? 'TOTP is verified for this session. Mailbox connections are enabled.'
-        : 'TOTP is active. Enter an authenticator code when signing in before connecting a mailbox.'
-      : 'Mailbox connections require a verified authenticator app (TOTP).';
+        ? 'Authenticator is verified for this session.'
+        : 'Authenticator is active. Enter its code when you sign in.'
+      : 'Add an authenticator app for stronger account security.';
     setup.hidden = verified;
     setup.disabled = false;
   } catch (error) {
@@ -211,7 +214,7 @@ async function verifyMfaEnrollment(event) {
     $('#mfa-enrollment').hidden = true;
     $('#mfa-start').hidden = true;
     $('#mfa-secret').textContent = '';
-    message.textContent = 'Authenticator verified. Mailbox connections are now enabled for this session.';
+    message.textContent = 'Authenticator verified. Your account is now better protected.';
     await refreshMfaStatus();
   } catch (error) {
     message.textContent = `Could not verify the authenticator code: ${error.message}`;

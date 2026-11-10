@@ -1,9 +1,10 @@
 // BingleSignal API: runs on Cloudflare Workers inside the same deploy as the website.
 // Only /api/* reaches this file; every other URL is served straight from /public.
 //   GET  /api/health
-//   POST /api/checkout           logged-in user picks a plan -> Razorpay subscription (India) or payment link (global)
+//   GET  /api/teaser             public headline-only teaser of today's top stories (cached 5 minutes)
+//   POST /api/checkout           logged-in user subscribes to the single Briefing plan -> Razorpay subscription (INR or USD)
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
-//   POST /api/webhooks/global    international provider (Standard Webhooks format, e.g. Dodo Payments)
+//   POST /api/webhooks/global    LEGACY: kept only so subscribers who paid through the old global provider keep working
 // Secrets needed: see wrangler.example.toml
 import { handleDeleteEmailData, handleEmailRequest, handleEmailSchedule } from './email-beta.js';
 import { handleForwardEmail } from './forward.js';
@@ -225,24 +226,20 @@ async function handleCheckout(req, env) {
   if (!u.ok) return json({ error: 'invalid session' }, 401);
   const user = await u.json();
   let body = {}; try { body = await req.json(); } catch {}
-  const plan = body.plan === 'lite' || body.plan === 'pro' ? body.plan : null;
-  const interval = body.interval;
+  // One plan: BingleSignal Briefing, monthly. It is stored as plan "lite" so existing subscribers, webhooks and database rows keep working.
+  const plan = 'lite';
+  const interval = 'month';
+  if (body.interval && body.interval !== 'month') return json({ error: 'Only monthly billing is available.' }, 400);
   const currency = body.currency || (req.headers.get('cf-ipcountry') === 'IN' ? 'INR' : 'USD');
   const gstin = typeof body.gstin === 'string' ? body.gstin.trim().toUpperCase() : '';
-  if (!plan) return json({ error: 'plan must be lite or pro' }, 400);
-  if (!['month', 'year'].includes(interval)) return json({ error: 'interval must be month or year' }, 400);
   if (!['INR', 'USD'].includes(currency)) return json({ error: 'currency must be INR or USD' }, 400);
   if (gstin && (currency !== 'INR' || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin))) {
     return json({ error: 'Enter a valid 15-character GSTIN for an INR purchase.' }, 400);
   }
-  const suffix = interval === 'year' ? 'YEARLY' : 'MONTHLY';
-  const razorpayPlanId = env[`RAZORPAY_PLAN_${plan.toUpperCase()}_${suffix}${currency === 'USD' ? '_USD' : ''}`];
-  const provider = currency === 'INR' || (body.provider === 'razorpay' && razorpayPlanId) ? 'razorpay' : 'global';
-  if (provider === 'razorpay' && (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET || !razorpayPlanId)) {
-    return json({ error: 'Razorpay plan is not configured for this currency and billing period.' }, 503);
-  }
-  if (provider === 'global' && !env[`GLOBAL_LINK_${plan.toUpperCase()}_${interval.toUpperCase()}`]) {
-    return json({ error: 'Global checkout is not configured for this plan.' }, 503);
+  const razorpayPlanId = env[currency === 'USD' ? 'RAZORPAY_PLAN_LITE_MONTHLY_USD' : 'RAZORPAY_PLAN_LITE_MONTHLY'];
+  const provider = 'razorpay'; // Razorpay is the only payment rail for new purchases
+  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET || !razorpayPlanId) {
+    return json({ error: 'Razorpay plan is not configured for this currency.' }, 503);
   }
 
   const attemptId = crypto.randomUUID();
@@ -277,21 +274,6 @@ async function handleCheckout(req, env) {
   await recordBillingEvent(env, user.id, 'checkout_started', { plan, interval, currency });
   let externalCheckoutCreated = false;
   try {
-    if (provider === 'global') {
-      const base = env[`GLOBAL_LINK_${plan.toUpperCase()}_${interval.toUpperCase()}`];
-      const tpl = env.GLOBAL_LINK_PARAMS || 'email={email}&metadata_user_id={user_id}&metadata_plan={plan}&metadata_interval={interval}';
-      const q = tpl.replace('{email}', encodeURIComponent(user.email || ''))
-        .replace('{user_id}', encodeURIComponent(user.id)).replace('{plan}', plan).replace('{interval}', interval);
-      const url = base + (base.includes('?') ? '&' : '?') + q;
-      externalCheckoutCreated = true;
-      const saved = await sb(env, '/rest/v1/rpc/finish_payment_checkout', {
-        method: 'POST',
-        body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId, p_provider_subscription_id: null, p_checkout_url: url }),
-      });
-      if (!saved.ok) throw new Error(`Checkout link could not be saved: ${saved.status}`);
-      return json({ provider: 'global', url });
-    }
-
     const subscriptionRows = await sb(env, `/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(user.id)}&select=status,trial_ends_at`);
     if (!subscriptionRows.ok) throw new Error(`Subscription lookup failed: ${subscriptionRows.status}`);
     const subscriptions = await subscriptionRows.json();
@@ -391,16 +373,59 @@ async function handlePlanSwitch(req, env) {
   return json({ ok: true, plan: body.plan, scheduled_for: scheduleChangeAt });
 }
 
+// Which Razorpay plans are configured (the pricing page greys the button out when its currency is not ready).
+export function razorpayRails(env) {
+  const keys = !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
+  const razorpay_inr = keys && !!env.RAZORPAY_PLAN_LITE_MONTHLY;
+  const razorpay_usd = keys && !!env.RAZORPAY_PLAN_LITE_MONTHLY_USD;
+  return { razorpay: razorpay_inr || razorpay_usd, razorpay_inr, razorpay_usd };
+}
+
+// ---------- public teaser: headlines only, cached for 5 minutes ----------
+// Replaces the static public/feed.json file as the homepage source, so it can never go stale or break on a Git merge.
+export function teaserItems(clusters, limit = 30) {
+  const items = [];
+  for (const cluster of Array.isArray(clusters) ? clusters : []) {
+    const stories = Array.isArray(cluster.stories) ? cluster.stories : [];
+    const rep = stories.find((story) => story && !story.v && story.t && /^https?:\/\//.test(story.u || ''));
+    if (!rep) continue;
+    const ms = Number(rep.d) > 1e12 ? Number(rep.d) : Number(rep.d) * 1000;
+    if (!Number.isFinite(ms)) continue;
+    items.push({
+      id: rep.id, t: rep.t, u: rep.u, s: rep.s, d: new Date(ms).toISOString(),
+      r: ['IN', 'US'].includes(rep.g?.[0]) ? rep.g[0] : 'GL',
+      k: Array.isArray(rep.k) ? rep.k.slice(0, 5) : [], c: cluster.story_id, n: cluster.source_count || 1, q: Number(rep.q) || 0,
+    });
+  }
+  return items.sort((a, b) => b.q - a.q).slice(0, limit);
+}
+
+async function handleTeaser(req, env, ctx) {
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+  const key = new Request(new URL('/api/teaser', req.url).toString());
+  const hit = cache ? await cache.match(key) : null;
+  if (hit) return hit;
+  const response = await sb(env, `/rest/v1/story_clusters?select=story_id,stories,source_count,published_at&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=published_at.desc&limit=400`);
+  if (!response.ok) return json({ error: 'teaser unavailable' }, 503);
+  const items = teaserItems(await response.json());
+  if (!items.length) return json({ error: 'teaser unavailable' }, 503);
+  const out = new Response(JSON.stringify({ v: 5, gen: new Date().toISOString(), n: items.length, items }), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300, stale-while-revalidate=600' },
+  });
+  if (cache && ctx?.waitUntil) ctx.waitUntil(cache.put(key, out.clone()));
+  return out;
+}
+
 export default {
   async email(message, env) {
     await handleForwardEmail(message, env);
   },
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const p = new URL(req.url).pathname;
     try {
       if (p === '/api/health') return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
-        rails: { razorpay: !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET && env.RAZORPAY_PLAN_LITE_MONTHLY && env.RAZORPAY_PLAN_PRO_MONTHLY),
-                 global: !!(env.GLOBAL_LINK_LITE_MONTH && env.GLOBAL_LINK_PRO_MONTH) } });
+        rails: razorpayRails(env) });
+      if (p === '/api/teaser' && req.method === 'GET') return await handleTeaser(req, env, ctx);
       if (['/api/telegram/webhook', '/api/telegram/link-code', '/api/unsubscribe'].includes(p)) {
         return await handleDeliveryRequest(req, env);
       }

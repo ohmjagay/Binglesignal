@@ -191,9 +191,9 @@ Please approve the project plan by Friday.\r
   });
   const env = {
     ...baseEnv,
-    EMAIL_AI_ENDPOINT: 'https://ai.example/v1/chat/completions',
-    EMAIL_AI_API_KEY: 'test',
-    EMAIL_AI_MODEL: 'test-model',
+    DEEPSEEK_BASE_URL: 'https://ai.example/v1',
+    DEEPSEEK_API_KEY: 'test',
+    DEEPSEEK_MODEL: 'test-model',
     EMAIL_AI_BUDGET: {
       idFromName: () => 'global',
       get: () => ({
