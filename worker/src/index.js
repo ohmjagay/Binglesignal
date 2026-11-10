@@ -16,6 +16,7 @@ export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
 
 const enc = new TextEncoder();
+const ONE_TIME_AMOUNT_PAISE = 39900;
 const json = (o, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
@@ -312,6 +313,145 @@ async function handleCheckout(req, env) {
   }
 }
 
+async function handleCreateOneTimeOrder(req, env) {
+  const user = await authUser(req, env);
+  if (!user) return json({ error: 'login required' }, 401);
+  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) {
+    return json({ error: 'Razorpay is not configured.' }, 503);
+  }
+
+  const attemptId = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const reservationResponse = await sb(env, '/rest/v1/rpc/reserve_one_time_payment_order', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_user_id: user.id,
+      p_attempt_id: attemptId,
+      p_amount: ONE_TIME_AMOUNT_PAISE,
+      p_expires_at: expiresAt,
+    }),
+  });
+  if (!reservationResponse.ok) throw new Error(`One-time checkout reservation failed: ${reservationResponse.status}`);
+  const reservation = await reservationResponse.json();
+  if (reservation.state !== 'reserved') {
+    const messages = {
+      already_subscribed: 'An active or pending subscription already exists for this account.',
+      subscription_checkout_open: 'A subscription checkout is already open for this account.',
+      checkout_in_progress: 'A one-time checkout is already open for this account.',
+    };
+    return json({ error: messages[reservation.state] || 'Could not reserve checkout.' }, 409);
+  }
+
+  try {
+    const response = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`),
+      },
+      body: JSON.stringify({
+        amount: ONE_TIME_AMOUNT_PAISE,
+        currency: 'INR',
+        receipt: `bs-${attemptId}`,
+        notes: { user_id: user.id, product: 'one_month_briefing' },
+      }),
+    });
+    const order = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await sb(env, '/rest/v1/rpc.release_one_time_payment_order', {
+        method: 'POST',
+        body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId }),
+      });
+      if (response.status === 401) return json({ error: 'Razorpay authentication failed.' }, 502);
+      return json({ error: order?.error?.description || 'Razorpay could not create the order.' }, 502);
+    }
+    if (!order.id || order.amount !== ONE_TIME_AMOUNT_PAISE || order.currency !== 'INR') {
+      throw new Error('Razorpay returned an invalid one-time order.');
+    }
+
+    const saved = await sb(env, '/rest/v1/rpc.finish_one_time_payment_order', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_user_id: user.id,
+        p_attempt_id: attemptId,
+        p_order_id: order.id,
+      }),
+    });
+    if (!saved.ok || (await saved.json()) !== true) {
+      throw new Error(`Razorpay order could not be saved: ${saved.status}`);
+    }
+    return json({
+      order_id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key_id: env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    const released = await sb(env, '/rest/v1/rpc.release_one_time_payment_order', {
+      method: 'POST',
+      body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId }),
+    });
+    if (!released.ok) throw new Error(`Order creation failed and reservation cleanup failed: ${released.status}`);
+    throw error;
+  }
+}
+
+async function handleVerifyOneTimePayment(req, env) {
+  const user = await authUser(req, env);
+  if (!user) return json({ error: 'login required' }, 401);
+  let body;
+  try { body = await req.json(); } catch { return json({ error: 'invalid JSON body' }, 400); }
+  const { razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: signature } = body || {};
+  if (![orderId, paymentId, signature].every((value) => typeof value === 'string' && value.length > 0)) {
+    return json({ error: 'Missing payment verification fields.' }, 400);
+  }
+  if (!(await verifyRazorpay(`${orderId}|${paymentId}`, signature, env.RAZORPAY_KEY_SECRET))) {
+    return json({ error: 'Payment signature did not match.' }, 400);
+  }
+
+  const rowsResponse = await sb(env, `/rest/v1/one_time_payment_orders?user_id=eq.${encodeURIComponent(user.id)}&order_id=eq.${encodeURIComponent(orderId)}&select=order_id,amount,currency,status,payment_id`);
+  if (!rowsResponse.ok) throw new Error(`Payment order lookup failed: ${rowsResponse.status}`);
+  const [storedOrder] = await rowsResponse.json();
+  if (!storedOrder || !['open', 'paid'].includes(storedOrder.status)) {
+    return json({ error: 'Payment order was not found for this account.' }, 404);
+  }
+  if (storedOrder.status === 'paid') {
+    if (storedOrder.payment_id !== paymentId) return json({ error: 'Payment order was already used.' }, 409);
+    return json({ ok: true, already_verified: true });
+  }
+
+  const auth = 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`);
+  const paymentResponse = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`, {
+    headers: { authorization: auth },
+  });
+  const payment = await paymentResponse.json().catch(() => ({}));
+  if (!paymentResponse.ok) return json({ error: 'Razorpay could not confirm the payment.' }, 502);
+  if (payment.order_id !== orderId || payment.amount !== storedOrder.amount || payment.currency !== storedOrder.currency) {
+    return json({ error: 'Payment does not match the order.' }, 400);
+  }
+  if (payment.status !== 'captured' && payment.captured !== true) {
+    return json({ error: 'Payment has not been captured.' }, 409);
+  }
+
+  const completionResponse = await sb(env, '/rest/v1/rpc.complete_one_time_payment_order', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_user_id: user.id,
+      p_order_id: orderId,
+      p_payment_id: paymentId,
+    }),
+  });
+  if (!completionResponse.ok) throw new Error(`One-time payment could not be applied: ${completionResponse.status}`);
+  const completion = await completionResponse.json();
+  if (completion?.state === 'already_subscribed') {
+    return json({ error: 'The payment was verified, but this account already has an active subscription. Please contact support.' }, 409);
+  }
+  if (!['paid', 'already_paid'].includes(completion?.state)) {
+    throw new Error('One-time payment could not be applied.');
+  }
+  return json({ ok: true });
+}
+
 // ---------- cancel (Razorpay: at cycle end. International: manual until a portal link is configured) ----------
 async function authUser(req, env) {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
@@ -378,7 +518,7 @@ export function razorpayRails(env) {
   const keys = !!(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
   const razorpay_inr = keys && !!env.RAZORPAY_PLAN_LITE_MONTHLY;
   const razorpay_usd = keys && !!env.RAZORPAY_PLAN_LITE_MONTHLY_USD;
-  return { razorpay: razorpay_inr || razorpay_usd, razorpay_inr, razorpay_usd };
+  return { razorpay: razorpay_inr || razorpay_usd, razorpay_inr, razorpay_usd, razorpay_one_time_inr: keys };
 }
 
 // ---------- public teaser: headlines only, cached for 5 minutes ----------
@@ -447,6 +587,16 @@ export default {
         if (action === 'checkout') return await handleCheckout(req, env);
         if (action === 'cancel') return await handleCancel(req, env);
         return await handlePlanSwitch(req, env);
+      }
+      if (p === '/api/create-order' || p === '/api/verify-payment') {
+        const limit = await checkApiRateLimit(req, env, 'checkout');
+        if (!limit.available) return json({ error: 'Rate limiting is temporarily unavailable; please try again shortly' }, 503);
+        if (!limit.allowed) return new Response(JSON.stringify({ error: 'Too many requests; please try again later' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': '600' },
+        });
+        if (p === '/api/create-order') return await handleCreateOneTimeOrder(req, env);
+        return await handleVerifyOneTimePayment(req, env);
       }
       if (p === '/api/webhooks/razorpay') return await handleRazorpay(req, env);
       if (p === '/api/webhooks/global') return await handleGlobal(req, env);
