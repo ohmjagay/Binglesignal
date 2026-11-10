@@ -1,22 +1,12 @@
 name: Refresh briefing
 
-# Publishes the full story pool (with DeepSeek summaries) to Supabase. The public teaser is served live by the Worker at /api/teaser:
-#   - automatically every 6 hours
-#   - whenever you change scripts/ or public/taxonomy.js
-#   - whenever you press "Run workflow" on the GitHub Actions tab
+# Publishes the full story pool (with DeepSeek summaries) to Supabase.
+# Automatic runs are paused while the production server error is investigated. Use workflow_dispatch to run manually.
 # IMPORTANT: this file MUST live at  .github/workflows/refresh-briefing.yml
 # (inside a folder called "workflows"). GitHub ignores it anywhere else.
 
 on:
-  schedule:
-    - cron: '7 */6 * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/**'
-      - '.github/workflows/**'
-      - 'public/taxonomy.js'
 
 permissions:
   contents: read

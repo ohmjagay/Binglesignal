@@ -35,6 +35,8 @@ test('DeepSeek is the only AI provider: no Anthropic or OpenAI calls, keys or ol
 
 test('The Refresh briefing workflow passes the DeepSeek settings to the ingest script', async () => {
   const workflow = await read('.github/workflows/refresh-briefing.yml');
+  assert.match(workflow, /on:\s+workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s+(?:schedule|push):/m);
   assert.match(workflow, /DEEPSEEK_API_KEY: \$\{\{ secrets\.DEEPSEEK_API_KEY \}\}/);
   assert.match(workflow, /DEEPSEEK_MODEL: \$\{\{ secrets\.DEEPSEEK_MODEL \}\}/);
   assert.match(workflow, /CLOUDFLARE_API_TOKEN/); // embeddings stay on Cloudflare Workers AI

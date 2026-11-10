@@ -140,6 +140,13 @@ test('Payment hardening migration makes checkout reservations private and webhoo
   assert.match(migration, /update public\.subscriptions s set/);
 });
 
+test('checkout currency migration supports the current INR and USD plans without changing older migrations', async () => {
+  const migration = await readFile(new URL('../../supabase/011_checkout_currency_support.sql', import.meta.url), 'utf8');
+  assert.match(migration, /alter table public\.payment_checkout_sessions/);
+  assert.match(migration, /drop constraint if exists payment_checkout_sessions_currency_check/);
+  assert.match(migration, /add constraint payment_checkout_sessions_currency_check\s+check \(currency in \('INR', 'USD'\)\)/);
+});
+
 test('Checkout without login -> 401', async () => {
   fakeNetwork();
   assert.equal((await worker.fetch(post('/api/checkout', { plan: 'pro' }), env)).status, 401);

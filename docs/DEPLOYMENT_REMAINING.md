@@ -1,4 +1,4 @@
-> **Update (v6):** AI is now DeepSeek only. Wherever this page mentions `EMAIL_AI_PROVIDER`, `EMAIL_AI_ENDPOINT`, `EMAIL_AI_API_KEY` or `EMAIL_AI_MODEL`, use `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` instead. Plans and payments are now one Razorpay plan; the email beta is paused. See `docs/DEEPSEEK_MIGRATION.md`.
+> **Update (v6):** DeepSeek is the only AI provider. New purchases use one monthly Razorpay plan; the email beta is paused. See [DEEPSEEK_MIGRATION.md](./DEEPSEEK_MIGRATION.md).
 
 # BingleSignal deployment and server-error checklist
 
@@ -8,7 +8,7 @@ This is a documentation-only checklist. It does not diagnose the current HTTP 50
 
 The site and Worker code can be deployed, but the live READ, WATCH, and Email Beta experience also depends on Supabase migrations, Cloudflare Worker settings, provider dashboards, GitHub Actions secrets, and populated database data.
 
-Payment-provider setup and scheduled outbound email/Telegram setup remain intentionally deferred. Until those are configured and tested, the site is not a fully enabled payments-and-delivery product. Do not turn on those features just to clear a READ/WATCH/Email Beta error.
+Razorpay activation and scheduled outbound email/Telegram setup are separate from fixing READ/WATCH/Email Beta. Do not turn on payments to clear a feed error. Follow [MANUAL_STEPS.md](./MANUAL_STEPS.md) for the Razorpay activation guide after the production Worker error is fixed.
 
 ## Step 1 — Capture the server error safely before changing settings
 
@@ -36,8 +36,9 @@ The feature sequence is:
 8. Delivery state: [008_delivery.sql](../supabase/008_delivery.sql)
 9. Payment hardening: [009_payment_hardening.sql](../supabase/009_payment_hardening.sql)
 10. Lifecycle email queue and metrics: [010_lifecycle_metrics.sql](../supabase/010_lifecycle_metrics.sql)
+11. Checkout INR/USD constraint correction: [011_checkout_currency_support.sql](../supabase/011_checkout_currency_support.sql)
 
-The founder previously reported 004–008 as run. Confirm that report against the actual Supabase project. Migrations 009 and 010 were not confirmed as applied in the last handoff; they concern payments/lifecycle and are not the first fix to try for READ/WATCH or Email Beta 500s.
+The founder previously reported 004–008 as run. Confirm that report against the actual Supabase project. Migrations 009–011 concern payment checkout and lifecycle; they are not the first fix to try for READ/WATCH or Email Beta 500s.
 
 If a needed migration is missing, use **Supabase Dashboard** → project → **SQL Editor** → **New query**, paste that migration's complete contents from VS Code, and select **Run**. Apply only the missing migration(s), in sequence. Check for an error before proceeding.
 
@@ -48,7 +49,7 @@ Open **Cloudflare Dashboard** → **Workers & Pages** → **binglesignal** → *
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY` as a Worker secret only
-- `EMAIL_AI_PROVIDER`, `EMAIL_AI_API_KEY`, and `EMAIL_AI_MODEL`; for an OpenAI-compatible provider, also `EMAIL_AI_ENDPOINT`
+- `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` if Email Beta is deliberately enabled
 - `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in GitHub Actions, if story ingestion uses Workers AI
 - Any Worker AI binding and Durable Object bindings shown by the Worker deployment configuration
 
@@ -63,7 +64,7 @@ The READ/WATCH code and data surfaces to include in a deployment/review are:
 - [scripts/ingest.mjs](../scripts/ingest.mjs) and [.github/workflows/refresh-briefing.yml](../.github/workflows/refresh-briefing.yml) — builds and publishes the private story pool.
 - [supabase/001_premium.sql](../supabase/001_premium.sql) and [supabase/007_briefing_v2.sql](../supabase/007_briefing_v2.sql) — plan access and private briefing tables.
 
-Confirm the **Refresh briefing** GitHub Action completes successfully: GitHub → **ohmjagay/Binglesignal** → **Actions** → **Refresh briefing** → **Run workflow**. A green run should write to Supabase and update the public teaser; it should not publish a full public pool file.
+Automatic **Refresh briefing** workflow runs are paused while the production server error is investigated; only an intentional manual dispatch should run it. A successful ingestion writes the private story pool to Supabase. The live public teaser is fetched separately by the Worker at `/api/teaser`; `public/feed.json` is only a fallback and is not updated by the workflow unless the ingestion script is explicitly run with `--write-teaser`.
 
 ## Step 4 — Check Email Beta prerequisites
 
@@ -74,7 +75,7 @@ Email Beta requires all of the following, even if the website itself loads:
 - `KEK_V1` and `KEK_CURRENT` configured as Cloudflare Worker secrets/variables. Keep the legacy `EMAIL_TOKEN_ENCRYPTION_KEY` until legacy mailbox tokens have migrated.
 - Google and Microsoft OAuth client IDs/secrets and exact callback URLs matching the deployed routes.
 - Supabase CAPTCHA/Turnstile configuration for sign-in, and TOTP MFA configured as required for mailbox connection.
-- `EMAIL_AI_PROVIDER`, `EMAIL_AI_API_KEY`, and model settings; the OpenAI-compatible provider also needs its HTTPS endpoint.
+- `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL` only if Email Beta is deliberately enabled.
 - The Worker AI budget Durable Object binding/deployment. If the global budget switch is on or the budget service is unavailable, summary generation may intentionally fall back to rules-only output.
 - An invited/eligible user and explicit consent before sending selected email text to the configured AI provider.
 
