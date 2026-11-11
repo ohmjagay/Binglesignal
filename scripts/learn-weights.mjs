@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { supabaseKeyHeaders } from '../worker/src/supabase.js';
 
 const FEEDBACK_WEIGHT = {
   like: 1, save: 0.8, share: 0.8, open: 0.3, dwell: 0.3,
@@ -32,8 +33,7 @@ async function request(path, key, init = {}) {
   const response = await fetch(`${process.env.SUPABASE_URL}${path}`, {
     ...init,
     headers: {
-      apikey: key,
-      authorization: ['Bearer', key].join(' '),
+      ...supabaseKeyHeaders(key),
       'content-type': 'application/json',
       ...init.headers,
     },

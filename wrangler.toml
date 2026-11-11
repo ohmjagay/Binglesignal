@@ -2,6 +2,9 @@
 name = "binglesignal"
 main = "worker/src/index.js"
 compatibility_date = "2025-10-01"
+# Keep variables you typed in the Cloudflare dashboard when this file is deployed. Without this line a deploy can silently
+# delete dashboard variables (not Secrets) such as SUPABASE_URL, and READ/WATCH then fail with "server error".
+keep_vars = true
 
 [assets]
 directory = "./public"

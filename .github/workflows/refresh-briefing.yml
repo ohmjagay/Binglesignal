@@ -1,11 +1,13 @@
 name: Refresh briefing
 
-# Publishes the full story pool (with DeepSeek summaries) to Supabase.
-# Automatic runs are paused while the production server error is investigated. Use workflow_dispatch to run manually.
+# Publishes the full story pool (with DeepSeek summaries) to Supabase, automatically every 6 hours (and on demand: Actions -> Refresh briefing -> Run workflow).
+# If this stops running, the briefing goes stale: the site keeps showing old stories. The Site health workflow checks for that too.
 # IMPORTANT: this file MUST live at  .github/workflows/refresh-briefing.yml
 # (inside a folder called "workflows"). GitHub ignores it anywhere else.
 
 on:
+  schedule:
+    - cron: '7 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -36,3 +38,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          # Optional spending brakes. Leave unset for the defaults (500 summaries per run, 120 from full article text).
+          # To spend less: repo -> Settings -> Secrets and variables -> Actions -> Variables -> New repository variable.
+          MAX_NEW_NOTES: ${{ vars.MAX_NEW_NOTES }}
+          DEEP_SUMMARY_TOP: ${{ vars.DEEP_SUMMARY_TOP }}

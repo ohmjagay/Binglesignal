@@ -64,7 +64,7 @@ The READ/WATCH code and data surfaces to include in a deployment/review are:
 - [scripts/ingest.mjs](../scripts/ingest.mjs) and [.github/workflows/refresh-briefing.yml](../.github/workflows/refresh-briefing.yml) — builds and publishes the private story pool.
 - [supabase/001_premium.sql](../supabase/001_premium.sql) and [supabase/007_briefing_v2.sql](../supabase/007_briefing_v2.sql) — plan access and private briefing tables.
 
-Automatic **Refresh briefing** workflow runs are paused while the production server error is investigated; only an intentional manual dispatch should run it. A successful ingestion writes the private story pool to Supabase. The live public teaser is fetched separately by the Worker at `/api/teaser`; `public/feed.json` is only a fallback and is not updated by the workflow unless the ingestion script is explicitly run with `--write-teaser`.
+The **Refresh briefing** workflow runs automatically every 6 hours again (see [FIX-2026-11-11.md](./FIX-2026-11-11.md) for the READ/WATCH server-error fix); you can also run it manually. A successful ingestion writes the private story pool to Supabase. The live public teaser is fetched separately by the Worker at `/api/teaser`; `public/feed.json` is only a fallback and is not updated by the workflow unless the ingestion script is explicitly run with `--write-teaser`.
 
 ## Step 4 — Check Email Beta prerequisites
 

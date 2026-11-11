@@ -7,7 +7,7 @@
   "build": "node -e \"console.log('Static site - nothing to build')\"",
   "deploy": "wrangler deploy",
   "ingest": "node scripts/ingest.mjs",
-  "test": "node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs worker/tests/llm.test.mjs worker/tests/crypto.test.mjs worker/tests/public-mfa.test.mjs worker/tests/email-pipeline.test.mjs worker/tests/forward.test.mjs worker/tests/briefing.test.mjs worker/tests/delivery.test.mjs worker/tests/payment-reconciliation.test.mjs worker/tests/lifecycle.test.mjs scripts/story-summary.test.mjs worker/tests/taste.test.mjs worker/tests/hygiene.test.mjs worker/tests/pricing-page.test.mjs scripts/article-text.test.mjs scripts/ingest.test.mjs"
+  "test": "node --test worker/tests/worker.test.mjs worker/tests/email-beta.test.mjs worker/tests/llm.test.mjs worker/tests/crypto.test.mjs worker/tests/public-mfa.test.mjs worker/tests/email-pipeline.test.mjs worker/tests/forward.test.mjs worker/tests/briefing.test.mjs worker/tests/delivery.test.mjs worker/tests/payment-reconciliation.test.mjs worker/tests/lifecycle.test.mjs scripts/story-summary.test.mjs worker/tests/taste.test.mjs worker/tests/hygiene.test.mjs worker/tests/pricing-page.test.mjs worker/tests/pool-lean.test.mjs scripts/article-text.test.mjs scripts/ingest.test.mjs"
  },
  "dependencies": {
   "postal-mime": "^4.2.0"

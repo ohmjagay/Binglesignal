@@ -3,7 +3,7 @@
 # BingleSignal remaining manual steps
 
 This checklist is ordered. Do not enter secret values in chat, source files, or GitHub variables.
-Automatic runs of the [Refresh briefing workflow](../.github/workflows/refresh-briefing.yml) are paused while the production server error is investigated. Use **Run workflow** only for an intentional manual refresh.
+The [Refresh briefing workflow](../.github/workflows/refresh-briefing.yml) runs automatically every 6 hours (it was paused on 10 Nov and switched back on 11 Nov, see [FIX-2026-11-11.md](./FIX-2026-11-11.md)). You can also use **Run workflow** for an immediate manual refresh.
 
 ## 1. Apply the remaining database migrations
 

@@ -12,6 +12,7 @@ import { handleBriefingRequest, handleEditionSchedule } from './briefing.js';
 import { handleDeliveryRequest } from './delivery.js';
 import { handleLifecycleSchedule } from './lifecycle.js';
 import { checkApiRateLimit } from './rate-limit.js';
+import { missingSupabaseConfig, supabaseKeyHeaders } from './supabase.js';
 export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
 
@@ -151,8 +152,8 @@ export function mapGlobal(evt, env = {}) {
 
 // ---------- Supabase (server-side, service key) ----------
 const sb = (env, path, init = {}) =>
-  fetch(`${env.SUPABASE_URL}${path}`, { ...init, headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': 'application/json', ...init.headers } });
+  fetch(`${env.SUPABASE_URL}${path}`, { ...init, headers: { ...supabaseKeyHeaders(env.SUPABASE_SERVICE_ROLE_KEY),
+    'content-type': 'application/json', ...init.headers } });
 
 async function recordBillingEvent(env, userId, name, props = {}) {
   try {
@@ -545,7 +546,18 @@ async function handleTeaser(req, env, ctx) {
   const key = new Request(new URL('/api/teaser', req.url).toString());
   const hit = cache ? await cache.match(key) : null;
   if (hit) return hit;
-  const response = await sb(env, `/rest/v1/story_clusters?select=story_id,stories,source_count,published_at&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=published_at.desc&limit=400`);
+  const missing = missingSupabaseConfig(env, ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']);
+  if (missing.length) {
+    console.error(`teaser: Worker setup problem: missing or invalid ${missing.join(', ')}`); // fix: docs/FIX-2026-11-11.md
+    return json({ error: 'teaser unavailable' }, 503);
+  }
+  let response;
+  try {
+    response = await sb(env, `/rest/v1/story_clusters?select=story_id,stories,source_count,published_at&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&order=published_at.desc&limit=400`);
+  } catch (error) {
+    console.error('teaser: could not reach Supabase:', error?.message || error);
+    return json({ error: 'teaser unavailable' }, 503);
+  }
   if (!response.ok) return json({ error: 'teaser unavailable' }, 503);
   const items = teaserItems(await response.json());
   if (!items.length) return json({ error: 'teaser unavailable' }, 503);
@@ -563,8 +575,13 @@ export default {
   async fetch(req, env, ctx) {
     const p = new URL(req.url).pathname;
     try {
-      if (p === '/api/health') return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
-        rails: razorpayRails(env) });
+      if (p === '/api/health') {
+        const missing = missingSupabaseConfig(env);
+        return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
+          rails: razorpayRails(env),
+          // true = this Worker can see the setting. Names only, never values. All three must be true for READ/WATCH to work.
+          supabase: { url: !missing.includes('SUPABASE_URL'), anon_key: !missing.includes('SUPABASE_ANON_KEY'), service_key: !missing.includes('SUPABASE_SERVICE_ROLE_KEY') } });
+      }
       if (p === '/api/teaser' && req.method === 'GET') return await handleTeaser(req, env, ctx);
       if (['/api/telegram/webhook', '/api/telegram/link-code', '/api/unsubscribe'].includes(p)) {
         return await handleDeliveryRequest(req, env);
@@ -602,7 +619,7 @@ export default {
       if (p === '/api/webhooks/global') return await handleGlobal(req, env);
       return json({ error: 'not found' }, 404);
     } catch (e) {
-      console.error(e);
+      console.error(`Unhandled error on ${p}: ${e?.message || e}`, e);
       return json({ error: 'server error' }, 500);   // provider will retry
     }
   },

@@ -171,7 +171,7 @@ async function loadPool(){
  const response=await fetch('/api/pool',{headers:{authorization:'Bearer '+access}});
  let result={};try{result=await response.json()}catch{}
  if(!response.ok)throw new Error(result.error||'Your briefing could not be loaded ('+response.status+').');
- POOL=result;for(const item of POOL.items||[])ITEM[item.id]=item;return POOL
+ POOL=result;const VEC=POOL.vectors||{};for(const item of POOL.items||[]){if(!item.embedding&&VEC[item.c])item.embedding=VEC[item.c];ITEM[item.id]=item}return POOL
 }
 function geoOf(i){const hit=a=>{let b=0;for(const g of a||[])P.geos.forEach((u,j)=>{if(inGeo(g,u))b=Math.max(b,j?.85:1)});return b},s=hit(i.g),m=hit(i.m);return i.g?.length?Math.max(s,m*.8):Math.max(.7,m)}
 // features: [bias, relevance (every matched interest adds, weighted by its priority: touching more interests ranks higher), coverage, geography, social proof, source quality, freshness, keyword affinity, source affinity]

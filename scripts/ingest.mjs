@@ -6,6 +6,7 @@ import {CATS,CC,EUROPE,cname} from '../public/taxonomy.js';
 import {summarizeStory} from './story-summary.mjs';
 import {fetchArticleText} from './article-text.mjs';
 import {DeepSeekError} from '../worker/src/deepseek.js';
+import {supabaseKeyHeaders} from '../worker/src/supabase.js';
 const [G,I,U,E]=['GL','IN','US','EU'],UA='Mozilla/5.0 (compatible; BingleSignalBot/5.0; +https://binglesignal.com)',HL={n:14,r:20,h:16,b:48,y:96};
 // Publisher feeds: ['feed url','Source',region,'default topics',trust 0-1]. Add or remove lines freely.
 const FEEDS=[
@@ -153,7 +154,7 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 const cleanText=value=>String(value||'').replace(/https?:\/\/\S+/gi,'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 const apiRequest=async(path,init={})=>{
  const response=await fetch(`${process.env.SUPABASE_URL}${path}`,{...init,headers:{
-  apikey:process.env.SUPABASE_SERVICE_ROLE_KEY,authorization:`Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+  ...supabaseKeyHeaders(process.env.SUPABASE_SERVICE_ROLE_KEY),
   'content-type':'application/json',...init.headers
  }});
  if(!response.ok)throw new Error(`Supabase ingest request failed (${response.status})`);
@@ -231,6 +232,7 @@ const same=(a,b)=>{let i=0;for(const w of a)if(b.has(w))i++;const j=i/(a.size+b.
 const now=Date.now(),hreg=g=>g==='IN'?'IN':g==='US'?'US':(g==='EU'||EUROPE.has(g))?'EU':'GL';
 const cosine=(a,b)=>{if(!Array.isArray(a)||!Array.isArray(b)||a.length!==b.length)return 0;let d=0,x=0,y=0;for(let i=0;i<a.length;i++){d+=a[i]*b[i];x+=a[i]*a[i];y+=b[i]*b[i]}return d/Math.sqrt(x*y||1)};
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const roundVector=vector=>vector.map(x=>Math.round(x*1000)/1000); // 3 decimals is plenty for "same meaning" matching and makes every stored row ~3x smaller
 console.log('sources to fetch:',FEEDS.length);
 const all=(await pmap(FEEDS,pull)).flat().concat(await pullHN(),await pullYT());
 const byUrl=new Map();for(const a of all){a.u=canonicalUrl(a.u);const prior=byUrl.get(a.u);if(prior)prior.top+=' '+a.top;else byUrl.set(a.u,a)}
@@ -251,7 +253,7 @@ const embeddingBatches=[];for(let i=0;i<cl.length;i+=100)embeddingBatches.push(c
 for(const batch of embeddingBatches){
  const vectors=await cloudflareEmbedding(batch.map(group=>`${group.rep.t}. ${cleanText(group.rep.x).slice(0,400)}`));
  if(vectors.length!==batch.length)throw new Error('Story embedding count did not match the request');
- batch.forEach((group,index)=>{group.embedding=vectors[index];for(const item of group.m)item.embedding=vectors[index]});
+ batch.forEach((group,index)=>{group.embedding=roundVector(vectors[index]);for(const item of group.m)item.embedding=group.embedding});
 }
 const oldClusters=await apiRequest(`/rest/v1/story_clusters?select=story_id,stories,embedding,source_tier,source_count,published_at,expires_at&published_at=gte.${encodeURIComponent(new Date(now-72*36e5).toISOString())}&order=published_at.desc&limit=2000`);
 for(const group of cl){
@@ -263,14 +265,14 @@ const rowsById=new Map();
 const serializeStory=item=>({id:item.id,t:item.t,u:item.u,s:item.s,d:Math.floor(+new Date(item.d)/1000),p:item.p,
  ...(item.v?{v:1,vid:item.vid}:{}),k:item.k,...(item.g.length?{g:item.g}:{}),...(item.m.length?{m:item.m}:{}),
  ...(item.x?{x:item.x}:{}),c:item.c,n:item.n,q:item.q,ep:item.ep,...(item.e!=null?{e:Math.round(item.e)}:{}),
- tr:item.tr,source_tier:item.tier,...(item.embedding?{embedding:item.embedding}:{})});
+ tr:item.tr,source_tier:item.tier});
 for(const item of [...selected,...selectedVideos]){
  const storyId=item.c,group=rowsById.get(storyId)||{story_id:storyId,items:[],embedding:item.embedding||null,source_tier:item.tier,source_count:0,published_at:item.d};
  group.items.push(serializeStory(item));group.source_tier=Math.min(group.source_tier,item.tier);if(new Date(item.d)>new Date(group.published_at))group.published_at=item.d;rowsById.set(storyId,group);
 }
 const clusterRows=[...rowsById.values()].map(group=>{
  const existing=oldClusters.find(row=>row.story_id===group.story_id),merged=new Map();
- for(const item of [...(existing?.stories||[]),...group.items])merged.set(item.u,item);
+ for(const item of [...(existing?.stories||[]).map(({embedding,...story})=>story),...group.items])merged.set(item.u,item);
  const stories=[...merged.values()].sort((a,b)=>new Date(b.d)-new Date(a.d)).slice(0,12);
  return{story_id:group.story_id,stories,embedding:group.embedding,source_tier:group.source_tier,
   source_count:new Set(stories.map(item=>item.s)).size,published_at:new Date(group.published_at).toISOString(),

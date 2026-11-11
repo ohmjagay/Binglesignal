@@ -1,9 +1,27 @@
+// Names of Supabase settings that are missing (or malformed) on this Worker. Empty list = fine.
+// These three must be added in Cloudflare -> Workers & Pages -> <your Worker> -> Settings -> Variables and Secrets,
+// as type "Secret" (see docs/FIX-2026-11-11.md). Only names are ever reported, never values.
+export function missingSupabaseConfig(env = {}, names = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+  return names.filter((name) => {
+    const value = String(env[name] || '').trim();
+    if (!value) return true;
+    return name === 'SUPABASE_URL' && !/^https:\/\/[^/\s]+$/.test(value); // must look like https://xxxx.supabase.co (no trailing slash)
+  });
+}
+
+// Headers that identify THIS server to Supabase. A legacy key (long, starts with "eyJ") is also sent as the Bearer token, exactly
+// as before. The newer keys (sb_secret_..., sb_publishable_...) are not JWTs: Supabase says to send them in the apikey header
+// only, so no Authorization header is added for them. This makes either kind of key work.
+export const supabaseKeyHeaders = (key) => ({
+  apikey: key,
+  ...(/^sb_(secret|publishable)_/.test(String(key || '')) ? {} : { authorization: `Bearer ${key}` }),
+});
+
 export const supabaseRequest = (env, path, init = {}) =>
   fetch(`${env.SUPABASE_URL}${path}`, {
     ...init,
     headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      ...supabaseKeyHeaders(env.SUPABASE_SERVICE_ROLE_KEY),
       'content-type': 'application/json',
       ...init.headers,
     },
@@ -13,13 +31,13 @@ export async function authUser(req, env) {
   const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
   if (!token) return null;
   if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
-    throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be configured for email beta authentication');
+    throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY are not set on this Worker (add them as Secrets in Cloudflare)');
   }
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
     headers: { apikey: env.SUPABASE_ANON_KEY, authorization: `Bearer ${token}` },
   });
   if (!response.ok) {
-    console.warn('email beta Supabase rejected the access token', response.status);
+    console.warn('Supabase rejected the sign-in token', response.status);
     return null;
   }
   return response.json();

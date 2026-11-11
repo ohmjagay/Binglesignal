@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { supabaseKeyHeaders } from '../worker/src/supabase.js';
 
 const API = 'https://api.razorpay.com/v1/subscriptions';
 const PAGE_SIZE = 100;
@@ -83,8 +84,7 @@ export async function reconcilePayments(env = process.env, fetchImpl = fetch) {
       const saved = await fetchImpl(patchUrl, {
         method: 'PATCH',
         headers: {
-          apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-          authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+          ...supabaseKeyHeaders(env.SUPABASE_SERVICE_ROLE_KEY),
           'content-type': 'application/json',
           prefer: 'return=minimal',
         },
