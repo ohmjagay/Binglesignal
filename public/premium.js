@@ -72,8 +72,9 @@ function payBox(e) {
   if (NOTICE) out.push(`<p class="err" role="status">${esc(NOTICE)}</p>`);
   if (q && rails.razorpay_inr) {
     const gst = q.gst_percent > 0 ? ` + ${esc(q.gst_percent)}% GST ₹${money(q.gst_inr)}` : '';
+    const rounding = q.rounding_inr > 0 ? ` + ₹${money(q.rounding_inr)} rounding` : '';
     out.push(`<button class="btn fill wide" data-pay="INR">Pay ₹${money(q.total_inr)} a month in rupees</button>`
-      + `<small class="mu">$${USD.toFixed(2)} at today's rate (₹${esc(q.rate)} per $1) = ₹${money(q.base_inr)}${gst}. Your rupee amount is fixed when you subscribe and stays the same every month.</small>`);
+      + `<small class="mu">$${USD.toFixed(2)} at today's rate (₹${esc(q.rate)} per $1) = ₹${money(q.base_inr)}${gst}${rounding}. Your rupee amount is fixed when you subscribe and stays the same every month.</small>`);
   } else if (rails.razorpay_inr) {
     out.push('<small class="mu">The live rupee price is unavailable right now. Please try again in a minute.</small>');
   }

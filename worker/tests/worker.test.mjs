@@ -33,8 +33,8 @@ function fakeNetwork(routes = {}) {
   };
   return calls;
 }
-// What an INR checkout talks to besides Supabase: the exchange-rate source and Razorpay's plan lookup (must be a 1-rupee plan).
-const inrRoutes = ({ rate = 88.4, planAmount = 100 } = {}) => ({
+// What an INR checkout talks to besides Supabase: the exchange-rate source and Razorpay's plan lookup (must be a 5-rupee plan).
+const inrRoutes = ({ rate = 88.4, planAmount = 500 } = {}) => ({
   'api.frankfurter.dev': () => Response.json({ rates: { INR: rate } }),
   'api.razorpay.com/v1/plans/': () => Response.json({ item: { currency: 'INR', amount: planAmount } }),
 });
@@ -219,8 +219,8 @@ test('Checkout (India): Razorpay subscription is created and the unused trial is
   assert.deepEqual(await res.json(), { provider: 'razorpay', key_id: 'rzp_test_1', subscription_id: 'sub_new', short_url: 'https://rzp.io/i/abc' });
   const rz = subscriptionCall(calls);
   assert.equal(rz.body.plan_id, 'plan_lite_m');
-  assert.equal(rz.body.quantity, 522, '$5 x 88.4 = 442 rupees + 18% GST (80) = 522 rupees, charged as 522 units of the 1-rupee plan');
-  assert.equal(rz.body.notes.total_inr, '522');
+  assert.equal(rz.body.quantity, 105, '$5 x 88.4 = 442 rupees + 18% GST (80) = 522, rounded up to 525 = 105 units of the 5-rupee plan');
+  assert.equal(rz.body.notes.total_inr, '525');
   assert.equal(rz.body.notes.user_id, USER.id);
   assert.equal(rz.body.start_at, Math.floor(trialEnd / 1000));
   assert.ok(rz.body.expire_by > Math.floor(Date.now() / 1000));

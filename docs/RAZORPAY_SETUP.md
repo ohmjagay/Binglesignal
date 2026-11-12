@@ -8,7 +8,7 @@
 |---|---|---|
 | Pricing page, everyone | `$5 / month`. No GSTIN box, no currency switch. | nothing yet |
 | Checkout, outside India | straight to Razorpay | `$5.00` from your USD plan |
-| Checkout, India | a choice: **Pay ₹522 in rupees** (shows `$5 x today's rate + 18% GST`) or **Pay $5.00 in US dollars** | rupees: `quantity` x a 1-rupee plan, fixed when they subscribe. Dollars: your USD plan |
+| Checkout, India | a choice: **Pay ₹525 in rupees** (shows `$5 x today's rate + 18% GST`) or **Pay $5.00 in US dollars** | rupees: `quantity` x a 5-rupee plan, fixed when they subscribe. Dollars: your USD plan |
 
 Rates come from free daily reference rates (Frankfurter/ECB, then ExchangeRate-API). They update once per business day, cached for an hour. That is "live" at the level the free sources allow.
 
@@ -27,9 +27,9 @@ Rates come from free daily reference rates (Frankfurter/ECB, then ExchangeRate-A
 
 1. **Account & Settings -> API Keys -> Generate Test Key.** You get a Key ID (`rzp_test_...`) and a Key Secret (shown once).
 2. **Subscriptions -> Plans -> Create Plan**, twice:
-   - **INR unit plan:** Billing frequency *Monthly*, every *1* month, amount **INR 1.00**. Copy its `plan_...` ID -> `RAZORPAY_PLAN_LITE_MONTHLY`.
+   - **INR unit plan:** Billing frequency *Monthly*, every *1* month, amount **INR 5.00**. Copy its `plan_...` ID -> `RAZORPAY_PLAN_LITE_MONTHLY`.
    - **USD plan:** Monthly, amount **USD 5.00**. Copy its ID -> `RAZORPAY_PLAN_LITE_MONTHLY_USD`.
-   - Your existing INR 299 plan is not used any more. Leave it alone. The Worker refuses any INR plan that is not exactly INR 1.
+   - Your existing INR 299 plan is not used any more. Leave it alone. The Worker refuses any INR plan that is not exactly INR 5.
    - If Razorpay will not let you create a USD plan, international payments are not switched on for your account yet (section 5).
 3. **Account & Settings -> Webhooks -> Add New Webhook**
    - URL: `https://binglesignal.com/api/webhooks/razorpay`
@@ -58,7 +58,7 @@ Locally, copy `.dev.vars.example` to `.dev.vars` (already git-ignored) if you wa
 2. Open `https://binglesignal.com/api/quote` from India. You should see `usd: 5` and an `inr` block with the rate and `total_inr`.
 3. Sign in with a test account -> **Pricing -> Subscribe**. In India you see the two-button choice with the breakdown. Choose rupees.
 4. Pay with a Razorpay test card (list: razorpay.com/docs/payments/payments/test-card-details). Choose "Success" on the test bank page.
-5. Check: Razorpay Dashboard -> **Subscriptions** shows the new subscription with the total (e.g. ₹522); **Webhooks -> logs** show `200`; the site's Account page says your plan is active.
+5. Check: Razorpay Dashboard -> **Subscriptions** shows the new subscription with the total (e.g. ₹525); **Webhooks -> logs** show `200`; the site's Account page says your plan is active.
 6. Repeat with a VPN or a non-Indian browser location (or just pick "US dollars") to test the USD path.
 
 ## 5. Going live and collecting from customers outside India
@@ -79,7 +79,7 @@ Locally, copy `.dev.vars.example` to `.dev.vars` (already git-ignored) if you wa
 | Symptom | Cause |
 |---|---|
 | Pricing page says "Payments opening soon" | the secret for that currency is missing or empty. Check `/api/health` |
-| Checkout says "Rupee billing is not set up correctly" | `RAZORPAY_PLAN_LITE_MONTHLY` is not exactly a INR 1.00 monthly plan |
+| Checkout says "Rupee billing is not set up correctly" | `RAZORPAY_PLAN_LITE_MONTHLY` is not exactly an INR 5.00 monthly plan |
 | Checkout says "live rupee price is unavailable" | both free rate sources failed. Set `FX_FALLBACK_USD_INR` or let customers pay in dollars |
 | Paid, but the account stays locked | the webhook is not arriving or its secret is wrong. Razorpay -> Webhooks -> logs |
 | After a deploy a setting vanished | it was a plain Variable, not a Secret. Re-add it as a Secret |

@@ -246,7 +246,7 @@ async function handleCheckout(req, env) {
     return json({ error: 'Razorpay plan is not configured for this currency.' }, 503);
   }
 
-  // India / INR: $5 is converted at today's rate, GST is added, and the total (whole rupees) becomes the subscription quantity of the 1-rupee INR plan.
+  // India / INR: $5 is converted at today's rate, GST is added, and the total (whole rupees) becomes the subscription quantity (total / 5) of the 5-rupee INR plan.
   let quote = null;
   if (currency === 'INR') {
     try {
@@ -302,10 +302,10 @@ async function handleCheckout(req, env) {
     const startAt = trialEnd - Date.now() > 15 * 60 * 1000 ? Math.floor(trialEnd / 1000) : undefined;
     const r = await fetch('https://api.razorpay.com/v1/subscriptions', { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },
-      body: JSON.stringify({ plan_id: razorpayPlanId, total_count: interval === 'year' ? 10 : 120, quantity: quote ? quote.total_inr : 1,
+      body: JSON.stringify({ plan_id: razorpayPlanId, total_count: interval === 'year' ? 10 : 120, quantity: quote ? quote.quantity : 1,
         customer_notify: 1, expire_by: Math.floor(Date.now() / 1000) + 15 * 60,
         notes: { user_id: user.id, plan, interval, currency, ...(gstin ? { gstin } : {}),
-          ...(quote ? { usd_price: String(quote.usd), fx_usd_inr: String(quote.rate), base_inr: String(quote.base_inr), gst_percent: String(quote.gst_percent), gst_inr: String(quote.gst_inr), total_inr: String(quote.total_inr) } : {}) },
+          ...(quote ? { usd_price: String(quote.usd), fx_usd_inr: String(quote.rate), base_inr: String(quote.base_inr), gst_percent: String(quote.gst_percent), gst_inr: String(quote.gst_inr), rounding_inr: String(quote.rounding_inr), unit_inr: String(quote.unit_inr), total_inr: String(quote.total_inr) } : {}) },
         ...(startAt ? { start_at: startAt } : {}) }) });
     const data = await r.json();
     if (!r.ok) {

@@ -2,14 +2,15 @@
 //
 //   Outside India  -> $5.00 charged in US dollars.
 //   India          -> the visitor chooses USD ($5.00) or rupees. Rupees are worked out live:
-//                       base  = round( $5 x today's USD->INR rate )          (whole rupees)
-//                       GST   = round( base x GST_PERCENT / 100 )            (whole rupees)
-//                       total = base + GST                                    <- what the customer pays every month
+//                       base     = round( $5 x today's USD->INR rate )        (whole rupees)
+//                       GST      = round( base x GST_PERCENT / 100 )          (whole rupees)
+//                       rounding = up to the next INR 5
+//                       total    = base + GST + rounding                      <- what the customer pays every month
 //
 // HOW THE RUPEE AMOUNT REACHES RAZORPAY
 // A Razorpay plan has a fixed price, but a Razorpay subscription can be created with a `quantity`
-// (amount charged = plan amount x quantity). So the INR plan in Razorpay is a ONE-RUPEE "unit" plan and each new subscriber
-// gets quantity = their total in rupees. The rupee amount is fixed when they subscribe and stays the same every month.
+// (amount charged = plan amount x quantity, and Razorpay allows a quantity of at most 500). So the INR plan in Razorpay is a FIVE-RUPEE "unit" plan and each
+// new subscriber gets quantity = their total / 5 (about 110 today, 500 would be INR 2,500). The rupee amount is fixed when they subscribe and stays the same every month.
 //
 // Change the price here (USD_PRICE) AND in public/config.js (price.usd) AND in the Razorpay USD plan: all three must say 5.
 
@@ -18,7 +19,9 @@ export const DEFAULT_GST_PERCENT = 18;
 const RATE_MIN = 40;            // anything outside this range is treated as a broken feed, never as a price
 const RATE_MAX = 300;
 const RATE_TTL_SECONDS = 3600;  // reference rates change once a day; an hour of caching also keeps us inside the free API limits
-const UNIT_PLAN_PAISE = 100;    // the INR plan MUST be exactly one rupee
+export const UNIT_RUPEES = 5;   // the INR plan MUST be exactly INR 5.00 a month; the customer's total is always a multiple of this
+export const MAX_QUANTITY = 500; // Razorpay's own limit on a subscription quantity
+const UNIT_PLAN_PAISE = UNIT_RUPEES * 100;
 
 export class QuoteUnavailable extends Error {
   constructor(message = 'Live exchange rate unavailable') { super(message); this.name = 'QuoteUnavailable'; }
@@ -39,13 +42,19 @@ export function buildInrQuote(rate, env = {}, meta = {}) {
   const gst = gstPercent(env);
   const base = Math.round(USD_PRICE * rate);
   const gstInr = Math.round(base * gst / 100);
+  const subtotal = base + gstInr;
+  const total = Math.ceil(subtotal / UNIT_RUPEES) * UNIT_RUPEES;
+  if (total / UNIT_RUPEES > MAX_QUANTITY) throw new QuoteUnavailable('Rupee total is outside what Razorpay can bill');
   return {
     usd: USD_PRICE,
     rate: Math.round(rate * 10000) / 10000,
     base_inr: base,
     gst_percent: gst,
     gst_inr: gstInr,
-    total_inr: base + gstInr,
+    rounding_inr: total - subtotal,
+    total_inr: total,
+    unit_inr: UNIT_RUPEES,
+    quantity: total / UNIT_RUPEES,
     source: meta.source || '',
     as_of: meta.at || new Date().toISOString(),
   };
@@ -98,7 +107,7 @@ export async function getInrQuote(env = {}) {
 }
 
 // Safety net: quantity pricing is only correct if the INR plan really is a one-rupee plan.
-// Without this check an old 299-rupee plan in RAZORPAY_PLAN_LITE_MONTHLY would charge 299 x 521 rupees.
+// Without this check an old 299-rupee (or 1-rupee) plan in RAZORPAY_PLAN_LITE_MONTHLY would charge the wrong amount.
 const verifiedPlans = new Map();
 export async function assertInrUnitPlan(env, planId) {
   if (verifiedPlans.get(planId) === true) return;
@@ -109,7 +118,7 @@ export async function assertInrUnitPlan(env, planId) {
   const plan = await response.json();
   const item = plan?.item || {};
   if (item.currency !== 'INR' || Number(item.amount) !== UNIT_PLAN_PAISE) {
-    throw new PlanMisconfigured(`RAZORPAY_PLAN_LITE_MONTHLY must be a plan of exactly INR 1.00 per month (found ${item.currency} ${Number(item.amount) / 100})`);
+    throw new PlanMisconfigured(`RAZORPAY_PLAN_LITE_MONTHLY must be a plan of exactly INR 5.00 per month (found ${item.currency} ${Number(item.amount) / 100})`);
   }
   verifiedPlans.set(planId, true);
 }

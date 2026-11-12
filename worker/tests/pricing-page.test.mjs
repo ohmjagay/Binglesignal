@@ -28,7 +28,7 @@ async function boot({ country = 'IN', rails = {}, quote, signedIn = true, access
     fetches.push({ url, body: init.body ? JSON.parse(init.body) : undefined });
     if (url.endsWith('/api/health')) return Response.json({ ok: true, country, rails });
     if (url.includes('/rpc/my_access')) return Response.json(access);
-    if (url.endsWith('/api/quote')) return Response.json(quote === undefined ? { usd: 5, country, inr: { usd: 5, rate: 88.4, base_inr: 442, gst_percent: 18, gst_inr: 80, total_inr: 522 } } : quote);
+    if (url.endsWith('/api/quote')) return Response.json(quote === undefined ? { usd: 5, country, inr: { usd: 5, rate: 88.4, base_inr: 442, gst_percent: 18, gst_inr: 80, rounding_inr: 3, total_inr: 525, quantity: 105 } } : quote);
     if (url.endsWith('/api/checkout')) return Response.json({ provider: 'razorpay', key_id: 'rzp_test', subscription_id: 'sub_1', short_url: 'https://rzp.io/i/1' });
     return new Response('{}');
   };
@@ -65,9 +65,9 @@ test('India: Subscribe first shows the live rupee total (rate + GST) next to the
   const app = await boot({ rails: { razorpay_inr: true, razorpay_usd: true } });
   await app.subscribe();
   assert.equal(app.fetches.some((entry) => entry.url.endsWith('/api/checkout')), false, 'nothing is charged until they choose');
-  assert.match(app.page, /data-pay="INR">Pay ₹522 a month in rupees/);
+  assert.match(app.page, /data-pay="INR">Pay ₹525 a month in rupees/);
   assert.match(app.page, /₹88\.4 per \$1/);
-  assert.match(app.page, /₹442 \+ 18% GST ₹80/);
+  assert.match(app.page, /₹442 \+ 18% GST ₹80 \+ ₹3 rounding/);
   assert.match(app.page, /data-pay="USD">Pay \$5\.00 a month in US dollars/);
   await app.back();
   assert.match(app.page, /data-plan="lite"/);
@@ -79,7 +79,7 @@ test('India: choosing rupees sends the price they saw, and opens Razorpay', asyn
   await app.subscribe();
   await app.pay('INR');
   const request = app.fetches.find((entry) => entry.url.endsWith('/api/checkout'));
-  assert.deepEqual(request.body, { interval: 'month', currency: 'INR', expected_total_inr: 522 });
+  assert.deepEqual(request.body, { interval: 'month', currency: 'INR', expected_total_inr: 525 });
   assert.equal(app.razorpay.length, 1);
   assert.equal(app.razorpay[0].key, 'rzp_test');
   assert.equal(app.razorpay[0].subscription_id, 'sub_1');
