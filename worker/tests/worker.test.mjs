@@ -33,6 +33,12 @@ function fakeNetwork(routes = {}) {
   };
   return calls;
 }
+// What an INR checkout talks to besides Supabase: the exchange-rate source and Razorpay's plan lookup (must be a 1-rupee plan).
+const inrRoutes = ({ rate = 88.4, planAmount = 100 } = {}) => ({
+  'api.frankfurter.dev': () => Response.json({ rates: { INR: rate } }),
+  'api.razorpay.com/v1/plans/': () => Response.json({ item: { currency: 'INR', amount: planAmount } }),
+});
+const subscriptionCall = (calls) => calls.find((c) => c.url.endsWith('/v1/subscriptions'));
 const post = (path, body, headers = {}) =>
   new Request('https://binglesignal.com' + path, {
     method: 'POST',
@@ -44,14 +50,20 @@ const rzpEvent = (event, extra = {}) => ({ event, created_at: 1793000000, payloa
   id: 'sub_123', plan_id: 'plan_pro_m', customer_id: 'cust_1', current_end: 1795600000,
   notes: { user_id: USER.id, plan: 'lite' }, ...extra } } } });
 
-test('Public pricing is centralized and uses the current INR and USD plan amounts', async () => {
+test('Public pricing is centralized: one $5 price for everyone, editable plan text in config.js', async () => {
   const config = await readFile(new URL('../../public/config.js', import.meta.url), 'utf8');
   const context = { window: {} };
   runInNewContext(config, context);
-  const prices = JSON.parse(JSON.stringify(context.window.BS.prices));
-  assert.deepEqual(prices, { IN: { c: '₹', month: '299' }, GL: { c: '$', month: '5' } });
+  const BS = JSON.parse(JSON.stringify(context.window.BS));
+  assert.deepEqual(BS.price, { usd: 5 });
+  assert.equal(BS.prices, undefined);
+  assert.equal(BS.plan.name, 'BingleSignal Briefing');
+  assert.ok(Array.isArray(BS.plan.features) && BS.plan.features.length >= 1);
+  const { USD_PRICE } = await import('../src/pricing.js');
+  assert.equal(USD_PRICE, BS.price.usd, 'config.js price.usd and worker/src/pricing.js USD_PRICE must match');
   const premium = await readFile(new URL('../../public/premium.js', import.meta.url), 'utf8');
-  assert.match(premium, /const PRICE = BS\.prices;/);
+  assert.match(premium, /BS\.plan/);
+  assert.doesNotMatch(premium, /GSTIN|gstin/);
   assert.doesNotMatch(premium, /\$2\.99|\$5\.99|month: '99'/);
   const vars = await readFile(new URL('../../.dev.vars.example', import.meta.url), 'utf8');
   for (const variable of [
@@ -199,13 +211,16 @@ test('Checkout (India): Razorpay subscription is created and the unused trial is
     '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
     '/rpc/finish_payment_checkout': () => Response.json(true),
     'select=status,trial_ends_at': () => Response.json([{ status: 'trialing', trial_ends_at: new Date(trialEnd).toISOString() }]),
+    ...inrRoutes(),
     'api.razorpay.com': () => Response.json({ id: 'sub_new', short_url: 'https://rzp.io/i/abc' }),
   });
   const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'INR' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'IN' }), env);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { provider: 'razorpay', key_id: 'rzp_test_1', subscription_id: 'sub_new', short_url: 'https://rzp.io/i/abc' });
-  const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
+  const rz = subscriptionCall(calls);
   assert.equal(rz.body.plan_id, 'plan_lite_m');
+  assert.equal(rz.body.quantity, 522, '$5 x 88.4 = 442 rupees + 18% GST (80) = 522 rupees, charged as 522 units of the 1-rupee plan');
+  assert.equal(rz.body.notes.total_inr, '522');
   assert.equal(rz.body.notes.user_id, USER.id);
   assert.equal(rz.body.start_at, Math.floor(trialEnd / 1000));
   assert.ok(rz.body.expire_by > Math.floor(Date.now() / 1000));
@@ -224,8 +239,10 @@ test('Checkout (outside India): the same single plan is sold in USD through Razo
   const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { provider: 'razorpay', key_id: 'rzp_test_1', subscription_id: 'sub_x', short_url: 'https://rzp.io/i/x' });
-  const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
+  const rz = subscriptionCall(calls);
   assert.equal(rz.body.plan_id, 'plan_lite_usd_m');
+  assert.equal(rz.body.quantity, 1, 'dollars are charged straight from the $5 USD plan');
+  assert.equal(calls.some((c) => c.url.includes('frankfurter') || c.url.includes('/v1/plans/')), false, 'no exchange-rate lookup for dollar checkouts');
   assert.equal(rz.body.notes.currency, 'USD');
   assert.equal(calls.some((c) => c.url.includes('pay.example.com')), false);
 });
@@ -236,12 +253,13 @@ test('Checkout always sells the one monthly plan, whatever plan or period the br
     '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
     '/rpc/finish_payment_checkout': () => Response.json(true),
     'select=status,trial_ends_at': () => Response.json([]),
+    ...inrRoutes(),
     'api.razorpay.com': () => Response.json({ id: 'sub_x', short_url: 'https://rzp.io/i/x' }),
   });
   const headers = { authorization: 'Bearer jwt', 'cf-ipcountry': 'IN' };
   const res = await worker.fetch(post('/api/checkout', { plan: 'pro', currency: 'INR' }, headers), env);
   assert.equal(res.status, 200);
-  const rz = calls.find((c) => c.url.includes('api.razorpay.com'));
+  const rz = subscriptionCall(calls);
   assert.equal(rz.body.plan_id, 'plan_lite_m');
   assert.equal(rz.body.notes.plan, 'lite');
   assert.equal(rz.body.notes.interval, 'month');

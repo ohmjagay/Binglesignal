@@ -105,3 +105,5 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{overflow-x:clip;pa
 .vc p.vn{color:#B7C5DA;font-size:13.5px;margin:2px 0 4px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .vc p.why{font-size:12.5px;margin:0 0 6px}
 .plans{grid-template-columns:minmax(0,520px);justify-content:center}
+/* India payment choice (pricing page) */
+.paybox{display:grid;gap:10px;margin-top:6px}.paybox p{margin:0}.paybox small{display:block;line-height:1.45}.paybox .btn{white-space:normal;text-align:center}.paybox .err{margin:0}

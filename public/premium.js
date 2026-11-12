@@ -3,16 +3,15 @@
 const BS = window.BS || (window.BS = {}), $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
-const PRICE = BS.prices;
+// Everything the pricing page says (name, bullets, heading, price) lives in public/config.js, so you edit it there.
+const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Every account starts with a 7-day free trial. No card needed. Cancel any time.',
+  name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [] }, BS.plan || {});
+const PLAN_NAME = PLAN.name;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
-const PLAN_NAME = 'BingleSignal Briefing';
-const FEATS = [
-  ['A finite daily briefing, rebuilt every 6 hours around your interests and region', 1],
-  ['READ: a clear summary of every story plus a "why it matters" line, with the original source one click away', 1],
-  ['WATCH: video picks with a short note on what each one covers, ranked by what you actually watch', 1],
-  ['A feed that learns from every like, save, hide, skip and watch', 1],
-];
-let ACC = null, ENVI = null, INT = 'month', CUR = null, busy = false, pendingMfaEnrollment = null;
+const FEATS = [...(PLAN.features || []).map((t) => [t, 1]), ...(PLAN.soon || []).map((t) => [t, 0])];
+const USD = Number(BS.price?.usd ?? 5);   // one price worldwide
+const money = (n) => Number(n).toLocaleString('en-IN');
+let ACC = null, ENVI = null, INT = 'month', QUOTE = null, NOTICE = '', busy = false, pendingMfaEnrollment = null;
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
 const authed = () => !!window.BSAuth?.has?.();
@@ -67,31 +66,61 @@ function frame(inner) {
   p.hidden = false; $('#home').hidden = true; $('#app').hidden = true; window.scrollTo(0, 0);
 }
 
-async function pricing() {
-  const e = await env(), localRegion = region(e), R = CUR || localRegion;
-  const rail = R === 'IN' ? e.rails.razorpay_inr : e.rails.razorpay_usd, P = PRICE[R];
-  const active = ACC?.status === 'active';
-  let cta;
-  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Then ${P.c}${P.month} a month.</small>`;
-  else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
-  else if (!rail) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running.</small>';
-  else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · ${P.c}${P.month}/month</button>`;
-  const gstin = R === 'IN' && authed() ? '<label class="gstin-field">GSTIN for an Indian business invoice (optional)<input id="gstin" maxlength="15" autocomplete="off" placeholder="15-character GSTIN"></label>' : '';
-  const card = `<article class="card plan hot"><div class="eyebrow">Daily briefing</div><h2 class="serif">${PLAN_NAME}</h2><p class="mu">The signal from today's news, summarised for you, with videos picked for how you watch.</p><div class="price"><span>${P.c}</span><b>${P.month}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${gstin}${cta}</article>`;
-  const currencyToggle = localRegion === 'IN'
-    ? `<div class="tog" role="group" aria-label="Billing currency"><button data-currency="IN" class="${R === 'IN' ? 'on' : ''}">INR</button><button data-currency="GL" class="${R === 'GL' ? 'on' : ''}">USD</button></div>`
-    : '';
-  frame(`<section class="pxh"><h1 class="serif">One plan. The whole briefing.</h1><p class="tag">Every account starts with a 7-day free trial. No card needed. Cancel any time.</p>${currencyToggle}</section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">Prices in ${R === 'IN' ? 'Indian rupees' : 'US dollars'}; applicable taxes are shown at checkout. Payments are processed by Razorpay. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+// India only: the "how would you like to pay" step. The rupee figure is the live quote from /api/quote (the server recomputes it at checkout).
+function payBox(e) {
+  const q = QUOTE?.inr, rails = e.rails || {}, out = [];
+  if (NOTICE) out.push(`<p class="err" role="status">${esc(NOTICE)}</p>`);
+  if (q && rails.razorpay_inr) {
+    const gst = q.gst_percent > 0 ? ` + ${esc(q.gst_percent)}% GST ₹${money(q.gst_inr)}` : '';
+    out.push(`<button class="btn fill wide" data-pay="INR">Pay ₹${money(q.total_inr)} a month in rupees</button>`
+      + `<small class="mu">$${USD.toFixed(2)} at today's rate (₹${esc(q.rate)} per $1) = ₹${money(q.base_inr)}${gst}. Your rupee amount is fixed when you subscribe and stays the same every month.</small>`);
+  } else if (rails.razorpay_inr) {
+    out.push('<small class="mu">The live rupee price is unavailable right now. Please try again in a minute.</small>');
+  }
+  if (rails.razorpay_usd) out.push(`<button class="btn wide" data-pay="USD">Pay $${USD.toFixed(2)} a month in US dollars</button><small class="mu">International card. Some Indian cards block dollar payments.</small>`);
+  out.push('<button class="btn sm" data-pay-cancel>Back</button>');
+  return `<div class="paybox" role="group" aria-label="Choose how to pay"><p class="mu">How would you like to pay?</p>${out.join('')}</div>`;
 }
 
-async function checkout() {
+async function pricing() {
+  const e = await env(), india = region(e) === 'IN', rails = e.rails || {};
+  const ready = india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd;
+  const active = ACC?.status === 'active';
+  let cta;
+  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Then $${USD} a month.</small>`;
+  else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
+  else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running.</small>';
+  else if (QUOTE && india) cta = payBox(e);
+  else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · $${USD}/month</button>`;
+  const card = `<article class="card plan hot"><div class="eyebrow">${esc(PLAN.label)}</div><h2 class="serif">${esc(PLAN_NAME)}</h2><p class="mu">${esc(PLAN.tagline)}</p><div class="price"><span>$</span><b>${esc(USD)}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
+  frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p></section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">One price worldwide: $${USD} a month. In India you can pay the same price in rupees at the live exchange rate plus applicable GST, and you see the exact total before you pay. Payments are processed by Razorpay. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+}
+
+// Step 1 of paying. Outside India there is nothing to choose, so go straight to the dollar checkout.
+async function startPay() {
+  if (busy) return;
+  const e = await env();
+  if (region(e) !== 'IN' || !e.rails?.razorpay_inr) return checkout('USD');
+  busy = true; NOTICE = '';
+  try {
+    const r = await fetch('/api/quote', { cache: 'no-store' });
+    const j = r.ok ? await r.json() : {};
+    QUOTE = { inr: j.inr || null };
+  } catch { QUOTE = { inr: null }; }
+  finally { busy = false; }
+  pricing();
+}
+
+async function checkout(currency) {
   if (busy) return; busy = true; let opened = false;
   const msg = (t) => { const m = $('#pxmsg'); if (m) m.textContent = t; };
   try {
-    const e = await env(), R = CUR || region(e), t = await window.BSAuth.token();
-    const gstin = R === 'IN' ? $('#gstin')?.value?.trim() || '' : '';
-    const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify({ interval: 'month', currency: R === 'IN' ? 'INR' : 'USD', gstin }) });
+    const t = await window.BSAuth.token();
+    const body = { interval: 'month', currency };
+    if (currency === 'INR' && QUOTE?.inr) body.expected_total_inr = QUOTE.inr.total_inr;   // the price the customer just saw: the server refuses if the rate moved since
+    const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 409 && j.code === 'rate_changed' && j.quote) { QUOTE = { inr: j.quote }; NOTICE = j.error; await pricing(); return; }
     if (!r.ok) throw new Error(j.error || 'checkout failed');
     if (j.provider === 'global') { opened = true; location.href = j.url; return; } // an old, still-open checkout from the previous provider
     await loadScript('https://checkout.razorpay.com/v1/checkout.js');
@@ -272,10 +301,10 @@ async function page() {
 const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest?.('[data-plan],[data-int],[data-currency],#cx,#delete-email-data,#mfa-start'); if (!t) return;
-  if (t.dataset.int) { INT = t.dataset.int; pricing(); }
-  else if (t.dataset.currency) { CUR = t.dataset.currency; pricing(); }
-  else if (t.dataset.plan) checkout(t.dataset.plan);
+  const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],#cx,#delete-email-data,#mfa-start'); if (!t) return;
+  if (t.dataset.payCancel !== undefined) { QUOTE = null; NOTICE = ''; pricing(); }
+  else if (t.dataset.pay) checkout(t.dataset.pay);
+  else if (t.dataset.plan) startPay();
   else if (t.id === 'delete-email-data') deleteEmailData();
   else if (t.id === 'mfa-start') startMfaEnrollment();
   else cancel();
