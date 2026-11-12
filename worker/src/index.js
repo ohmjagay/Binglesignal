@@ -2,6 +2,7 @@
 // Only /api/* reaches this file; every other URL is served straight from /public.
 //   GET  /api/health
 //   GET  /api/teaser             public headline-only teaser of today's top stories (cached 5 minutes)
+//   GET  /api/quote              live $5 -> INR quote (+GST) shown on the checkout step in India
 //   POST /api/checkout           logged-in user subscribes to the single Briefing plan -> Razorpay subscription (INR or USD)
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
 //   POST /api/webhooks/global    LEGACY: kept only so subscribers who paid through the old global provider keep working
@@ -13,6 +14,7 @@ import { handleDeliveryRequest } from './delivery.js';
 import { handleLifecycleSchedule } from './lifecycle.js';
 import { checkApiRateLimit } from './rate-limit.js';
 import { missingSupabaseConfig, supabaseKeyHeaders } from './supabase.js';
+import { handleQuote, getInrQuote, assertInrUnitPlan, QuoteUnavailable, PlanMisconfigured } from './pricing.js';
 export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
 
@@ -244,6 +246,23 @@ async function handleCheckout(req, env) {
     return json({ error: 'Razorpay plan is not configured for this currency.' }, 503);
   }
 
+  // India / INR: $5 is converted at today's rate, GST is added, and the total (whole rupees) becomes the subscription quantity of the 1-rupee INR plan.
+  let quote = null;
+  if (currency === 'INR') {
+    try {
+      quote = await getInrQuote(env);
+      await assertInrUnitPlan(env, razorpayPlanId);
+    } catch (error) {
+      if (error instanceof QuoteUnavailable) return json({ error: 'The live rupee price is unavailable right now. Please try again in a minute, or pay in US dollars.' }, 503);
+      if (error instanceof PlanMisconfigured) { console.error(error.message); return json({ error: 'Rupee billing is not set up correctly yet. Please pay in US dollars or contact support.' }, 503); }
+      throw error;
+    }
+    const expected = Number(body.expected_total_inr);
+    if (Number.isFinite(expected) && expected > 0 && expected !== quote.total_inr) {
+      return json({ error: 'The exchange rate just changed. Please review the new price and confirm.', code: 'rate_changed', quote }, 409);
+    }
+  }
+
   const attemptId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
   const reservationResponse = await sb(env, '/rest/v1/rpc/reserve_payment_checkout', {
@@ -283,9 +302,10 @@ async function handleCheckout(req, env) {
     const startAt = trialEnd - Date.now() > 15 * 60 * 1000 ? Math.floor(trialEnd / 1000) : undefined;
     const r = await fetch('https://api.razorpay.com/v1/subscriptions', { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },
-      body: JSON.stringify({ plan_id: razorpayPlanId, total_count: interval === 'year' ? 10 : 120, quantity: 1,
+      body: JSON.stringify({ plan_id: razorpayPlanId, total_count: interval === 'year' ? 10 : 120, quantity: quote ? quote.total_inr : 1,
         customer_notify: 1, expire_by: Math.floor(Date.now() / 1000) + 15 * 60,
-        notes: { user_id: user.id, plan, interval, currency, ...(gstin ? { gstin } : {}) },
+        notes: { user_id: user.id, plan, interval, currency, ...(gstin ? { gstin } : {}),
+          ...(quote ? { usd_price: String(quote.usd), fx_usd_inr: String(quote.rate), base_inr: String(quote.base_inr), gst_percent: String(quote.gst_percent), gst_inr: String(quote.gst_inr), total_inr: String(quote.total_inr) } : {}) },
         ...(startAt ? { start_at: startAt } : {}) }) });
     const data = await r.json();
     if (!r.ok) {
@@ -592,6 +612,7 @@ export default {
       }
       if (p === '/api/privacy/delete-email-data') return await handleDeleteEmailData(req, env);
       if (p.startsWith('/api/email/')) return await handleEmailRequest(req, env);
+      if (p === '/api/quote' && req.method === 'GET') return await handleQuote(req, env);
       if (req.method !== 'POST') return json({ error: 'not found' }, 404);
       if (p === '/api/checkout' || p === '/api/cancel' || p === '/api/plan/switch') {
         const action = p === '/api/checkout' ? 'checkout' : p === '/api/cancel' ? 'cancel' : 'plan_switch';
