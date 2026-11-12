@@ -25,9 +25,12 @@ YOUTUBE_API_KEY=                    # [GitHub] optional: video keyword search
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=            # you choose it when adding the webhook https://binglesignal.com/api/webhooks/razorpay
-# ONE plan: BingleSignal Briefing, monthly. Create two Razorpay plans (internally this plan is called "lite").
-RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx  INR plan, amount must equal prices.IN.month in public/config.js
-RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx  USD plan, amount must equal prices.GL.month in public/config.js ($5)
+# ONE plan, $5 a month worldwide. Create two Razorpay plans (internally this plan is called "lite"). Full steps: docs/RAZORPAY_SETUP.md
+RAZORPAY_PLAN_LITE_MONTHLY=         # plan_xxx  INR "unit" plan: Monthly, amount exactly INR 5.00. Each Indian subscriber is charged quantity x INR 5 (Razorpay allows a quantity of at most 500) (live $5 in rupees + GST).
+                                    #           The Worker REFUSES INR checkouts if this plan is not exactly INR 5, so an old 299-rupee or 1-rupee plan can never be multiplied.
+RAZORPAY_PLAN_LITE_MONTHLY_USD=     # plan_xxx  USD plan: Monthly, amount exactly $5.00 (must equal price.usd in public/config.js)
+GST_PERCENT=                        # optional. Empty = 18. Set 0 until you have a GSTIN: you may not charge GST without one.
+FX_FALLBACK_USD_INR=                # optional last resort if both free exchange-rate sources are down, e.g. 88.5. Empty = show "rupee price unavailable" and offer dollars.
 # LEGACY plan IDs. Fill them ONLY if somebody already subscribed to an old plan, so their renewals keep working. Otherwise leave empty.
 RAZORPAY_PLAN_PRO_MONTHLY=
 RAZORPAY_PLAN_LITE_YEARLY=
