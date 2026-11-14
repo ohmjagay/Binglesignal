@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { reconcilePayments } from '../../scripts/reconcile-payments.mjs';
 
 const config = {
-  RAZORPAY_KEY_ID: 'test-key',
-  RAZORPAY_KEY_SECRET: 'test-secret',
+  RAZORPAY_KEY_ID: 'rzp_test_TzLVoS1J532sNF',
+  RAZORPAY_KEY_SECRET: 'ggVjDsDGONSWH2nIo677Dmo3',
   RAZORPAY_PLAN_PRO_MONTHLY: 'plan_pro_inr_month',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role',
