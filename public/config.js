@@ -15,13 +15,25 @@ window.BS={
     tagline:"The signal from today's news, summarised for you, with videos picked for how you watch.",
     // One line per bullet. These are what a subscriber gets.
     features:[
-      'A finite daily briefing, rebuilt every 6 hours around your interests and region',
+      'A finite daily briefing, rebuilt every hour around your interests and region',
       'READ: a clear summary of every story plus a "why it matters" line, with the original source one click away',
       'WATCH: video picks with a short note on what each one covers, ranked by what you actually watch',
       'A feed that learns from every like, save, hide, skip and watch'
     ],
-    // Things you are building but have not shipped. They show greyed out with a "soon" tag. Leave [] for none.
-    soon:[]
+        // Things you are building but have not shipped. They show greyed out with a "soon" tag. Leave [] for none.
+    soon:[],
+    // Small print under the price card. {usd} turns into your price ($5). The Refunds and Terms links are added after it automatically.
+    fine:'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
+    // Shown under the "Pay in US dollars" button that visitors in India see. Leave '' to hide it.
+    usdNote:'International card. Your bank may add its own exchange rate and fees, and some Indian cards block dollar payments.',
+    // Questions and answers under the price card (like the FAQ on cardboard.ai/pricing). One ['question','answer'] pair per line, no comma after the last one. faq:[] hides the whole block.
+    faqHeading:'Questions',
+    faq:[
+      ['Can I cancel any time?','Yes. Cancel from your Account page and you keep access until the end of the period you have already paid for.'],
+      ['Is there a free trial?','Yes. Every account starts with a 7-day free trial, and no card is needed to start it.'],
+      ['How do I pay?','Outside India you pay {usd} a month by international card. In India you can choose rupees or US dollars.'],
+      ['How is the rupee price worked out?','{usd} is converted at the exchange rate on the day you subscribe and rounded up to the next 5 rupees. That rupee amount then stays the same every month.']
+    ]
   },
   emailBeta:false,  // the invited email beta is paused; set true (and EMAIL_BETA_ENABLED=true in Cloudflare) to bring its tab back
  

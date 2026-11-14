@@ -107,3 +107,5 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{overflow-x:clip;pa
 .plans{grid-template-columns:minmax(0,520px);justify-content:center}
 /* India payment choice (pricing page) */
 .paybox{display:grid;gap:10px;margin-top:6px}.paybox p{margin:0}.paybox small{display:block;line-height:1.45}.paybox .btn{white-space:normal;text-align:center}.paybox .err{margin:0}
+/* Questions under the price card (pricing page) */
+.faq{margin-top:20px}.faq h3{font-size:17px;margin:16px 0 4px}.faq h3:first-of-type{margin-top:12px}.faq p{margin:0}

@@ -5,11 +5,15 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
 // Everything the pricing page says (name, bullets, heading, price) lives in public/config.js, so you edit it there.
 const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Every account starts with a 7-day free trial. No card needed. Cancel any time.',
-  name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [] }, BS.plan || {});
+    name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [],
+  fine: 'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
+  usdNote: 'International card. Your bank may add its own exchange rate and fees, and some Indian cards block dollar payments.',
+  faqHeading: 'Questions', faq: [] }, BS.plan || {});
 const PLAN_NAME = PLAN.name;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
 const FEATS = [...(PLAN.features || []).map((t) => [t, 1]), ...(PLAN.soon || []).map((t) => [t, 0])];
 const USD = Number(BS.price?.usd ?? 5);   // one price worldwide
+const fill = (s) => esc(s).replace(/\{usd\}/g, () => '$' + USD);   // text typed in config.js: {usd} becomes the price, e.g. $5
 const money = (n) => Number(n).toLocaleString('en-IN');
 let ACC = null, ENVI = null, INT = 'month', QUOTE = null, NOTICE = '', busy = false, pendingMfaEnrollment = null;
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
@@ -78,7 +82,7 @@ function payBox(e) {
   } else if (rails.razorpay_inr) {
     out.push('<small class="mu">The live rupee price is unavailable right now. Please try again in a minute.</small>');
   }
-  if (rails.razorpay_usd) out.push(`<button class="btn wide" data-pay="USD">Pay $${USD.toFixed(2)} a month in US dollars</button><small class="mu">International card. Some Indian cards block dollar payments.</small>`);
+    if (rails.razorpay_usd) out.push(`<button class="btn wide" data-pay="USD">Pay $${USD.toFixed(2)} a month in US dollars</button>${PLAN.usdNote ? `<small class="mu">${esc(PLAN.usdNote)}</small>` : ''}`);
   out.push('<button class="btn sm" data-pay-cancel>Back</button>');
   return `<div class="paybox" role="group" aria-label="Choose how to pay"><p class="mu">How would you like to pay?</p>${out.join('')}</div>`;
 }
@@ -94,7 +98,9 @@ async function pricing() {
   else if (QUOTE && india) cta = payBox(e);
   else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · $${USD}/month</button>`;
   const card = `<article class="card plan hot"><div class="eyebrow">${esc(PLAN.label)}</div><h2 class="serif">${esc(PLAN_NAME)}</h2><p class="mu">${esc(PLAN.tagline)}</p><div class="price"><span>$</span><b>${esc(USD)}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
-  frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p></section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p><p class="mu fine">One price worldwide: $${USD} a month. In India you can pay the same price in rupees at the live exchange rate plus applicable GST, and you see the exact total before you pay. Payments are processed by Razorpay. <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+    const faq = (PLAN.faq || []).filter((x) => Array.isArray(x) && x[0] && x[1]);
+  const faqCard = faq.length ? `<div class="plans faq"><section class="card"><h2 class="serif">${esc(PLAN.faqHeading)}</h2>${faq.map(([q, a]) => `<h3 class="serif">${esc(q)}</h3><p class="mu">${fill(a)}</p>`).join('')}</section></div>` : '';
+  frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p></section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p>${faqCard}<p class="mu fine">${fill(PLAN.fine)} <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
 
 // Step 1 of paying. Outside India there is nothing to choose, so go straight to the dollar checkout.

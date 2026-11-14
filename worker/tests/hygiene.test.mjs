@@ -59,3 +59,8 @@ test('The pricing page sells one Razorpay plan and has no yearly or Pro cards', 
   assert.match(premium, /razorpay_inr/);
   assert.doesNotMatch(premium, /data-plan="pro"|Yearly|Choose Pro|Choose Lite/);
 });
+test('No accidental download copies such as "index (2).js" or "premium (1).js" are left in the project', async () => {
+  const everything = [];
+  for (const dir of ['worker/', 'public/', 'scripts/', 'supabase/', 'docs/', '.github/']) everything.push(...await files(dir));
+  assert.deepEqual(everything.filter((path) => / \(\d+\)\.[a-z]+$/i.test(path)), []);
+});

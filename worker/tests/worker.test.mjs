@@ -351,12 +351,12 @@ test('Health endpoint reports the visitor country (pricing page uses it to show 
 
 test('Health says which Razorpay plans are configured and never exposes a secret', async () => {
   const full = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), env)).json();
-  assert.deepEqual(full.rails, { razorpay: true, razorpay_inr: true, razorpay_usd: true, razorpay_one_time_inr: true });
+  assert.deepEqual(full.rails, { razorpay: true, razorpay_inr: true, razorpay_usd: true });
   assert.equal(JSON.stringify(full).includes('secret'), false);
-  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_PLAN_LITE_MONTHLY_USD: '' }), { razorpay: true, razorpay_inr: true, razorpay_usd: false, razorpay_one_time_inr: true });
-  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_KEY_SECRET: '' }), { razorpay: false, razorpay_inr: false, razorpay_usd: false, razorpay_one_time_inr: false });
+  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_PLAN_LITE_MONTHLY_USD: '' }), { razorpay: true, razorpay_inr: true, razorpay_usd: false });
+  assert.deepEqual(razorpayRails({ ...env, RAZORPAY_KEY_SECRET: '' }), { razorpay: false, razorpay_inr: false, razorpay_usd: false });
   const empty = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), {})).json();
-  assert.deepEqual(empty.rails, { razorpay: false, razorpay_inr: false, razorpay_usd: false, razorpay_one_time_inr: false });
+  assert.deepEqual(empty.rails, { razorpay: false, razorpay_inr: false, razorpay_usd: false });
 });
 
 const teaserCluster = (id, q, extra = {}) => ({ story_id: id, source_count: 3, stories: [{
@@ -387,4 +387,71 @@ test('GET /api/teaser serves a cacheable teaser from Supabase and fails soft whe
   assert.equal((await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env)).status, 503);
   fakeNetwork({ story_clusters: () => new Response('boom', { status: 500 }) });
   assert.equal((await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env)).status, 503);
+});
+// ===== Razorpay go-live fixes F1 to F4 =====
+test('Checkout: the Razorpay link and the database reservation expire at the very same moment, 20 minutes ahead (Razorpay needs at least 15)', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/finish_payment_checkout': () => Response.json(true),
+    'select=status,trial_ends_at': () => Response.json([]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_x', short_url: 'https://rzp.io/i/x' }),
+  });
+  const before = Math.floor(Date.now() / 1000);
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
+  assert.equal(res.status, 200);
+  const reservedUntil = calls.find((c) => c.url.includes('/rpc/reserve_payment_checkout')).body.p_expires_at;
+  const { expire_by } = subscriptionCall(calls).body;
+  assert.equal(expire_by, Math.floor(Date.parse(reservedUntil) / 1000), 'same moment, so a second checkout cannot start while the first link is still valid');
+  assert.ok(expire_by >= before + 19 * 60 && expire_by <= before + 21 * 60, "about 20 minutes ahead, safely above Razorpay's 15-minute minimum");
+});
+
+test('Checkout: when Razorpay refuses, the user sees its message and Cloudflare Logs get status, code and description (no secrets)', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/release_payment_checkout': () => new Response('null', { status: 200 }),
+    'select=status,trial_ends_at': () => Response.json([]),
+    'api.razorpay.com': () => Response.json({ error: { code: 'BAD_REQUEST_ERROR', description: 'Subscriptions are not enabled for this account' } }, { status: 400 }),
+  });
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(JSON.stringify(args));
+  let res;
+  try {
+    res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt-token-123', 'cf-ipcountry': 'DE' }), env);
+  } finally { console.error = originalError; }
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).error, 'Subscriptions are not enabled for this account');
+  assert.ok(calls.some((c) => c.url.includes('/rpc/release_payment_checkout')), 'the reservation is released so the user can try again at once');
+  const log = logged.join('\n');
+  for (const expected of ['400', 'BAD_REQUEST_ERROR', 'Subscriptions are not enabled for this account']) assert.ok(log.includes(expected), `the log should contain ${expected}`);
+  for (const forbidden of [env.RAZORPAY_KEY_SECRET, env.RAZORPAY_KEY_ID, env.RAZORPAY_WEBHOOK_SECRET, 'jwt-token-123', USER.email, 'Basic ']) {
+    assert.equal(log.includes(forbidden), false, `the log must not contain ${forbidden}`);
+  }
+});
+
+test('Health shows razorpay_mode (test / live / unset, read from the key prefix) and gst_percent, and exposes no key or secret', async () => {
+  const health = async (e) => (await worker.fetch(new Request('https://binglesignal.com/api/health'), e)).json();
+  const testing = await health(env);   // key is rzp_test_1 and GST_PERCENT is not set
+  assert.equal(testing.razorpay_mode, 'test');
+  assert.equal(testing.gst_percent, 18, 'an empty GST_PERCENT means 18%: without a GSTIN it must be set to 0');
+  const live = await health({ ...env, RAZORPAY_KEY_ID: 'rzp_live_AbC123', GST_PERCENT: '0' });
+  assert.equal(live.razorpay_mode, 'live');
+  assert.equal(live.gst_percent, 0);
+  for (const hidden of ['rzp_live_AbC123', 'secret', 'hooksecret']) assert.equal(JSON.stringify(live).includes(hidden), false, hidden);
+  assert.equal((await health({ ...env, RAZORPAY_KEY_ID: 'not-a-razorpay-key' })).razorpay_mode, 'unset');
+  assert.equal((await health({})).razorpay_mode, 'unset');
+});
+
+test('The old one-time order routes are gone (404) and the health rails no longer mention them', async () => {
+  const calls = fakeNetwork({ '/auth/v1/user': () => Response.json(USER) });
+  for (const path of ['/api/create-order', '/api/verify-payment']) {
+    assert.equal((await worker.fetch(post(path, {}, { authorization: 'Bearer jwt' }), env)).status, 404, path);
+  }
+  assert.equal(calls.some((c) => c.url.includes('api.razorpay.com') || c.url.includes('one_time')), false);
+  const { rails } = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), env)).json();
+  assert.equal('razorpay_one_time_inr' in rails, false);
+  const source = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /ONE_TIME_AMOUNT_PAISE|one_time_payment|rpc\.(release|finish|complete)_/);
 });
