@@ -4,8 +4,8 @@ const BS = window.BS || (window.BS = {}), $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
 // Everything the pricing page says (name, bullets, heading, price) lives in public/config.js, so you edit it there.
-const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Every account starts with a 7-day free trial. No card needed. Cancel any time.',
-    name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [],
+const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Start reading straight away. Cancel any time. Full refund within 7 days of your first payment.',
+  name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [],
   fine: 'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
   usdNote: 'International card. Your bank may add its own exchange rate and fees, and some Indian cards block dollar payments.',
   faqHeading: 'Questions', faq: [] }, BS.plan || {});
@@ -82,7 +82,7 @@ function payBox(e) {
   } else if (rails.razorpay_inr) {
     out.push('<small class="mu">The live rupee price is unavailable right now. Please try again in a minute.</small>');
   }
-    if (rails.razorpay_usd) out.push(`<button class="btn wide" data-pay="USD">Pay $${USD.toFixed(2)} a month in US dollars</button>${PLAN.usdNote ? `<small class="mu">${esc(PLAN.usdNote)}</small>` : ''}`);
+  if (rails.razorpay_usd) out.push(`<button class="btn wide" data-pay="USD">Pay $${USD.toFixed(2)} a month in US dollars</button>${PLAN.usdNote ? `<small class="mu">${esc(PLAN.usdNote)}</small>` : ''}`);
   out.push('<button class="btn sm" data-pay-cancel>Back</button>');
   return `<div class="paybox" role="group" aria-label="Choose how to pay"><p class="mu">How would you like to pay?</p>${out.join('')}</div>`;
 }
@@ -92,13 +92,13 @@ async function pricing() {
   const ready = india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd;
   const active = ACC?.status === 'active';
   let cta;
-  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Then $${USD} a month.</small>`;
+  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Get started</a><small class="mu">Create your account, then subscribe for $${USD} a month.</small>`;
   else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
-  else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Your trial keeps running.</small>';
+  else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Please check back shortly.</small>';
   else if (QUOTE && india) cta = payBox(e);
   else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · $${USD}/month</button>`;
   const card = `<article class="card plan hot"><div class="eyebrow">${esc(PLAN.label)}</div><h2 class="serif">${esc(PLAN_NAME)}</h2><p class="mu">${esc(PLAN.tagline)}</p><div class="price"><span>$</span><b>${esc(USD)}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
-    const faq = (PLAN.faq || []).filter((x) => Array.isArray(x) && x[0] && x[1]);
+  const faq = (PLAN.faq || []).filter((x) => Array.isArray(x) && x[0] && x[1]);
   const faqCard = faq.length ? `<div class="plans faq"><section class="card"><h2 class="serif">${esc(PLAN.faqHeading)}</h2>${faq.map(([q, a]) => `<h3 class="serif">${esc(q)}</h3><p class="mu">${fill(a)}</p>`).join('')}</section></div>` : '';
   frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p></section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p>${faqCard}<p class="mu fine">${fill(PLAN.fine)} <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
@@ -161,7 +161,7 @@ async function paused() {
   await acc.ready;
   if (!ACC || ACC.has_access) { location.hash = '#/me/read'; return; }
   const tease = ((await loadTeaser()).items || []).slice(0, 3).map((a) => `<li>${esc(a.t)}</li>`).join('');
-  frame(`<section class="pxh"><h1 class="serif">Your briefing is paused</h1><p class="tag">Your 7-day trial has ended. Your settings are saved. Choose a plan to pick up where you left off.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
+  frame(`<section class="pxh"><h1 class="serif">Subscribe to read your briefing</h1><p class="tag">Your settings are saved. Choose a plan and your briefing starts straight away.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
 }
 
 async function loadUsageMetrics() {
@@ -182,7 +182,7 @@ async function loadUsageMetrics() {
 async function account() {
   if (!authed()) { location.hash = '#/me/read'; return; }
   await acc.ready; const a = ACC;
-  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Trial ended', none: 'No plan' };
+  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'No plan' };
   let body = '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
   if (a) {
     const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`

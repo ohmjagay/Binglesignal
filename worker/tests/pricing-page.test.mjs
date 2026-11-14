@@ -115,14 +115,16 @@ test('Outside India there is nothing to choose: $5 in dollars, once the USD plan
   assert.equal(ready.razorpay.length, 1);
 });
 
-test('Signed-out visitors see the free trial; subscribers see "Your current plan"', async () => {
+test('Signed-out visitors are invited to get started (there is no free trial); subscribers see "Your current plan"', async () => {
   const visitor = await boot({ signedIn: false, rails: { razorpay_inr: true } });
-  assert.match(visitor.page, /Start 7-day free trial/);
+  assert.match(visitor.page, /Get started/);
+  assert.doesNotMatch(visitor.page, /7-day|free trial/i);
   assert.doesNotMatch(visitor.page, /data-plan=/);
   const subscriber = await boot({ rails: { razorpay_inr: true }, access: { status: 'active', plan: 'lite', has_access: true } });
   assert.match(subscriber.page, /Your current plan/);
   assert.doesNotMatch(subscriber.page, /data-plan=/);
 });
+
 test('Everything you would want to reword comes from config.js: edit it there and the pricing page follows', async () => {
   const app = await boot({ rails: { razorpay_usd: true }, plan: {
     heading: 'HEADING-X', note: 'NOTE-X', name: 'NAME-X', label: 'LABEL-X', tagline: 'TAGLINE-X',
