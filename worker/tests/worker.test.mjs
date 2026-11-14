@@ -478,3 +478,9 @@ test('Checkout: a new account with no free trial is billed at once (no start_at)
   assert.equal(res.status, 200);
   assert.equal('start_at' in subscriptionCall(calls).body, false, 'billing starts the moment they subscribe');
 });
+
+test('Sign-in and sign-up send the Turnstile token where Supabase looks for it (inside gotrue_meta_security)', async () => {
+  const app = await readFile(new URL('../../public/app.js', import.meta.url), 'utf8');
+  assert.equal(app.match(/gotrue_meta_security:\{captcha_token:captchaToken\}/g)?.length, 2, 'one for sign-up, one for sign-in');
+  assert.doesNotMatch(app, /[,{]captcha_token:captchaToken\}\}\)/, 'a bare top-level captcha_token is ignored by Supabase ("no captcha_token found")');
+});
