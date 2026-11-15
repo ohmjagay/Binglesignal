@@ -388,6 +388,7 @@ test('GET /api/teaser serves a cacheable teaser from Supabase and fails soft whe
   fakeNetwork({ story_clusters: () => new Response('boom', { status: 500 }) });
   assert.equal((await worker.fetch(new Request('https://binglesignal.com/api/teaser'), env)).status, 503);
 });
+
 // ===== Razorpay go-live fixes F1 to F4 =====
 test('Checkout: the Razorpay link and the database reservation expire at the very same moment, 20 minutes ahead (Razorpay needs at least 15)', async () => {
   const calls = fakeNetwork({
@@ -454,4 +455,32 @@ test('The old one-time order routes are gone (404) and the health rails no longe
   assert.equal('razorpay_one_time_inr' in rails, false);
   const source = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /ONE_TIME_AMOUNT_PAISE|one_time_payment|rpc\.(release|finish|complete)_/);
+});
+
+// ===== No free trial =====
+test('Migration 013 ends the free trial for new sign-ups and changes nothing already stored', async () => {
+  const sql = await readFile(new URL('../../supabase/013_no_free_trial.sql', import.meta.url), 'utf8');
+  assert.match(sql, /alter column status set default 'expired'/i);
+  assert.match(sql, /alter column trial_ends_at set default now\(\)/i);
+  assert.doesNotMatch(sql, /\b(update|delete|drop|insert)\b/i, 'people already in a trial keep it');
+});
+
+test('Checkout: a new account with no free trial is billed at once (no start_at); only an unused trial is postponed', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/finish_payment_checkout': () => Response.json(true),
+    // what a brand-new sign-up looks like after migration 013: "expired", with a trial that ends the moment it begins
+    'select=status,trial_ends_at': () => Response.json([{ status: 'expired', trial_ends_at: new Date().toISOString() }]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_x', short_url: 'https://rzp.io/i/x' }),
+  });
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
+  assert.equal(res.status, 200);
+  assert.equal('start_at' in subscriptionCall(calls).body, false, 'billing starts the moment they subscribe');
+});
+
+test('Sign-in and sign-up send the Turnstile token where Supabase looks for it (inside gotrue_meta_security)', async () => {
+  const app = await readFile(new URL('../../public/app.js', import.meta.url), 'utf8');
+  assert.equal(app.match(/gotrue_meta_security:\{captcha_token:captchaToken\}/g)?.length, 2, 'one for sign-up, one for sign-in');
+  assert.doesNotMatch(app, /[,{]captcha_token:captchaToken\}\}\)/, 'a bare top-level captcha_token is ignored by Supabase ("no captcha_token found")');
 });

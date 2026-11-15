@@ -50,8 +50,8 @@ async function verifyTotp(factorId,code,accessToken=S?.at){
  const challenge=await api('/auth/v1/factors/'+encodeURIComponent(factorId)+'/challenge',{m:'POST',t:accessToken,b:{}});
  return api('/auth/v1/factors/'+encodeURIComponent(factorId)+'/verify',{m:'POST',t:accessToken,b:{challenge_id:challenge.id||challenge.challenge_id,code}});
 }
-async function signUp(email,password,name,captchaToken){const j=await api('/auth/v1/signup',{m:'POST',b:{email,password,data:{full_name:name||email.split('@')[0]},captcha_token:captchaToken}});return j.access_token?setSess(j):null}
-const signIn=async(email,password,captchaToken)=>setSess(await api('/auth/v1/token?grant_type=password',{m:'POST',b:{email,password,captcha_token:captchaToken}}));
+async function signUp(email,password,name,captchaToken){const j=await api('/auth/v1/signup',{m:'POST',b:{email,password,data:{full_name:name||email.split('@')[0]},gotrue_meta_security:{captcha_token:captchaToken}}});return j.access_token?setSess(j):null}
+const signIn=async(email,password,captchaToken)=>setSess(await api('/auth/v1/token?grant_type=password',{m:'POST',b:{email,password,gotrue_meta_security:{captcha_token:captchaToken}}}));
 let authCaptcha='',captchaWidget=null,captchaLoader;
 function loadTurnstile(){
  if(!BS.turnstileSiteKey)throw new Error('Sign-in protection is not configured. Please contact support.');

@@ -9,7 +9,7 @@ window.BS={
   price:{usd:5},
   plan:{
     heading:'One plan. The whole briefing.',
-    note:'Every account starts with a 7-day free trial. No card needed. Cancel any time.',
+    note:'Start reading straight away. Cancel any time. Full refund within 7 days of your first payment.',
     name:'BingleSignal Briefing',
     label:'Daily briefing',
     tagline:"The signal from today's news, summarised for you, with videos picked for how you watch.",
@@ -30,7 +30,7 @@ window.BS={
     faqHeading:'Questions',
     faq:[
       ['Can I cancel any time?','Yes. Cancel from your Account page and you keep access until the end of the period you have already paid for.'],
-      ['Is there a free trial?','Yes. Every account starts with a 7-day free trial, and no card is needed to start it.'],
+      ['When am I charged?','The moment you subscribe, then every month until you cancel. If you are not satisfied, email us within 7 days of your first payment for a full refund.'],
       ['How do I pay?','Outside India you pay {usd} a month by international card. In India you can choose rupees or US dollars.'],
       ['How is the rupee price worked out?','{usd} is converted at the exchange rate on the day you subscribe and rounded up to the next 5 rupees. That rupee amount then stays the same every month.']
     ]
