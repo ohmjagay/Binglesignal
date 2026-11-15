@@ -324,6 +324,8 @@ for(let offset=0;offset<notesToWrite.length;offset+=100){
  await apiRequest('/rest/v1/story_notes?on_conflict=story_id',{method:'POST',headers:{prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(notesToWrite.slice(offset,offset+100))});
 }
 await apiRequest(`/rest/v1/story_clusters?expires_at=lt.${encodeURIComponent(new Date(now).toISOString())}`,{method:'DELETE',headers:{prefer:'return=minimal'}});
+// Housekeeping: every subscriber gets a stored daily edition (about 7 KB). Keep 30 days, delete the rest, so the database does not grow forever.
+await apiRequest(`/rest/v1/editions?created_at=lt.${encodeURIComponent(new Date(now-30*864e5).toISOString())}`,{method:'DELETE',headers:{prefer:'return=minimal'}});
 const feed=keep(reads.filter(a=>a.p!=='r'),4,30).map(a=>({id:a.id,t:a.t,u:a.u,s:a.s,d:new Date(a.d).toISOString(),r:hreg(a.r),k:a.k,c:a.c,n:a.n,q:a.q}));
 // The public teaser is now served live by the Worker at /api/teaser. The static file is only a fallback and is written on request:
 //   node scripts/ingest.mjs --write-teaser

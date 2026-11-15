@@ -268,3 +268,55 @@ test('delivery migration keeps delivery and Telegram tables server-only', async 
   assert.match(migration, /delivery_logs l[\s\S]*l\.user_id = d\.user_id/i);
   assert.match(migration, /interval '2 hours'/i);
 });
+
+test('15-minute edition schedule composes EVERY due user (250 users in one slot), not just the first 100', async (context) => {
+  const users = Array.from({ length: 250 }, (_, i) => `bbbbbbbb-0000-0000-0000-${String(i).padStart(12, '0')}`);
+  const posted = [];
+  let clusterQueries = 0, claims = 0;
+  installFetch(context, async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/claim_due_edition_slots')) {
+      claims++;
+      return json(users.map((id) => ({ user_id: id, plan: 'lite', timezone: 'Asia/Kolkata', local_date: '2026-02-01', local_slot: '07:00:00', slot_key: `${id}:2026-02-01:0700` })));
+    }
+    if (url.pathname.endsWith('/story_clusters')) {
+      clusterQueries++;
+      assert.equal(url.searchParams.get('offset'), null, 'editions must use the lean loader (no 4,000-row paging)');
+      return json([]);
+    }
+    if (url.pathname.endsWith('/editions') && init.method === 'POST') {
+      posted.push(...JSON.parse(init.body));
+      return new Response(null, { status: 204 });
+    }
+    if (['/user_profile_v2', '/watchlists', '/feedback', '/editions'].some((path) => url.pathname.endsWith(path))) return json([]);
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  });
+  await handleEditionSchedule(baseEnv, new Date('2026-02-01T01:30:00Z'));
+  assert.equal(claims, 1);
+  assert.equal(clusterQueries, 2, 'the story pool is loaded once per run (recent + videos), not once per batch');
+  assert.equal(posted.length, 250);
+  assert.equal(new Set(posted.map((row) => row.user_id)).size, 250);
+});
+
+test('one failing batch does not stop the other batches, and the run still reports the failure', async (context) => {
+  const users = Array.from({ length: 150 }, (_, i) => `cccccccc-0000-0000-0000-${String(i).padStart(12, '0')}`);
+  const posted = [];
+  let editionWrites = 0;
+  installFetch(context, async (input, init = {}) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/claim_due_edition_slots')) {
+      return json(users.map((id) => ({ user_id: id, plan: 'lite', timezone: 'UTC', local_date: '2026-02-01', local_slot: '07:00:00', slot_key: `${id}:2026-02-01:0700` })));
+    }
+    if (url.pathname.endsWith('/story_clusters')) return json([]);
+    if (url.pathname.endsWith('/editions') && init.method === 'POST') {
+      editionWrites++;
+      if (editionWrites === 1) return new Response('boom', { status: 500 });
+      posted.push(...JSON.parse(init.body));
+      return new Response(null, { status: 204 });
+    }
+    if (['/user_profile_v2', '/watchlists', '/feedback', '/editions'].some((path) => url.pathname.endsWith(path))) return json([]);
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  });
+  await assert.rejects(() => handleEditionSchedule(baseEnv, new Date('2026-02-01T07:00:00Z')), /1 edition batch/);
+  assert.equal(posted.length, 50, 'the second batch (users 101-150) was still composed');
+});

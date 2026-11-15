@@ -109,3 +109,10 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}body{overflow-x:clip;pa
 .paybox{display:grid;gap:10px;margin-top:6px}.paybox p{margin:0}.paybox small{display:block;line-height:1.45}.paybox .btn{white-space:normal;text-align:center}.paybox .err{margin:0}
 /* Questions under the price card (pricing page) */
 .faq{margin-top:20px}.faq h3{font-size:17px;margin:16px 0 4px}.faq h3:first-of-type{margin-top:12px}.faq p{margin:0}
+/* Hover summary (peek.js): a larger box that grows out of the headline box and holds its AI summary. It never takes the pointer, so a click still reaches the box underneath. */
+.pk{position:fixed;z-index:40;pointer-events:none;background:var(--s2);border:1px solid var(--gd);border-radius:var(--r);padding:18px 20px 14px;box-shadow:0 20px 50px rgba(0,0,0,.55);opacity:0;transform:translateY(5px);transition:opacity .14s ease-out,transform .14s ease-out}
+.pk.on{opacity:1;transform:none}
+.pk h4{font-size:19px;line-height:1.3;margin:0 0 10px}
+.pk .y{font-size:15px;line-height:1.65;color:#D3DEEE;margin:0 0 12px}
+.pk small{display:block;border-top:1px solid var(--ln);padding-top:10px;color:var(--mu);font-size:12.5px}
+@media(prefers-reduced-motion:reduce){.pk{transition:none;transform:none}}

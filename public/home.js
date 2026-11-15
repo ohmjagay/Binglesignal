@@ -1,5 +1,6 @@
 import {LBL,GRP,ENTSPT,EUROPE,QUICK,cname} from './taxonomy.js';
 import {P,savePrefs,openGeo,openInterests,toggleInterest,tune,esc} from './app.js';
+import './peek.js';
 const $=s=>document.querySelector(s),
 safe=u=>/^https?:\/\//i.test(u)?esc(u):'#',
 ago=d=>{const h=(Date.now()-new Date(d))/36e5;return h<1?Math.max(1,Math.round(h*60))+'m ago':h<24?Math.round(h)+'h ago':Math.round(h/24)+'d ago'},
@@ -15,7 +16,8 @@ NOT=new Set('the,why,how,what,when,who,after,new,says,say,this,that,here,live,to
 hreg=g=>g==='IN'?'IN':g==='US'?'US':(g==='EU'||EUROPE.has(g))?'EU':'GL',
 geo=a=>a.r==='GL'||P.geos.some(g=>hreg(g)===a.r)||(a.r==='IN'&&P.sel.includes('india')),
 lnk=a=>`href="${safe(a.u)}" target="_blank" rel="noopener noreferrer"`,
-row=(e,big)=>{const a=e.a;return `<a class="row" ${lnk(a)}>${big&&a.i?`<img src="${esc(a.i)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:''}<div><h4 class="serif">${esc(a.t)}</h4>${big&&a.x?`<p>${esc(short(a.x,170))}</p>`:''}<small>${meta(a)}</small></div></a>`};
+pk=a=>a.y?` data-pk-t="${esc(a.t)}" data-pk-y="${esc(a.y)}" data-pk-s="${esc(a.s)}" data-pk-u="${safe(a.u)}"`:'',
+row=(e,big)=>{const a=e.a;return `<a class="row" ${lnk(a)}${pk(a)}>${big&&a.i?`<img src="${esc(a.i)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:''}<div><h4 class="serif">${esc(a.t)}</h4>${big&&a.x?`<p>${esc(short(a.x,170))}</p>`:''}<small>${meta(a)}</small></div></a>`};
 let D=[],GEN=Date.now(),stage=1,more=false,ready=false;const WK={};
 
 function build(){
@@ -70,7 +72,7 @@ function render(){
  $('#gm').textContent='Good '+(h<12?'morning':h<17?'afternoon':'evening')+(P.name?', '+P.name:'');
  $('#tg').textContent=OP[(Math.floor(Date.now()/864e5)+hash(P.name+ids[0]))%OP.length]+'.'+(dk[0]?` On your ${LBL[dk[0].id]} desk: “${short(dk[0].a.t,72)}”.`:'');
  $('#ed').textContent=ready&&D.length?'Edition updated '+ago(GEN):'';
- $('#dk').innerHTML=dk.map(e=>`<a class="tile" ${lnk(e.a)}><span class="lab">${esc(LBL[e.id])}</span><h4 class="serif">${esc(e.a.t)}</h4><small>${meta(e.a)}</small></a>`).join('');
+ $('#dk').innerHTML=dk.map(e=>`<a class="tile" ${lnk(e.a)}${pk(e.a)}><span class="lab">${esc(LBL[e.id])}</span><h4 class="serif">${esc(e.a.t)}</h4><small>${meta(e.a)}</small></a>`).join('');
  $('#st').hidden=!st;if(st){$('#st').innerHTML=story(st,its);bg(its,st.a.c)}
  $('#fyw').hidden=!fy.length;$('#fy').innerHTML=fy.map(e=>row(e,1)).join('');
  $('#sc').innerHTML=ids.map(id=>[id,show.filter(e=>e.id===id)]).filter(g=>g[1].length).map(([id,l])=>`<section><h3 class="sec serif">${esc(LBL[id])}<small>${l.length} stories · ${esc(P.geos.slice(0,2).map(cname).join(' & '))}</small></h3><div class="card">${l.map((e,i)=>row(e,i===0)).join('')}</div></section>`).join('');

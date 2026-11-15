@@ -51,17 +51,6 @@ async function requireReader(req, env) {
   return { user, plan };
 }
 
-async function poolRows(env, now = new Date()) {
-  const output = [];
-  for (let offset = 0; offset < 4000; offset += 500) {
-    const page = await rows(env,
-      `/rest/v1/story_clusters?select=story_id,stories,embedding,source_tier,source_count,published_at,expires_at&expires_at=gt.${encodeURIComponent(now.toISOString())}&order=published_at.desc&limit=500&offset=${offset}`);
-    output.push(...page);
-    if (page.length < 500) break;
-  }
-  return output;
-}
-
 function inFilter(ids) {
   return `in.(${ids.map((id) => encodeURIComponent(id)).join(',')})`;
 }
@@ -427,11 +416,15 @@ export async function handleBriefingRequest(req, env) {
   return json({ error: 'not found' }, 404);
 }
 
-async function poolForEditions(env) {
-  const clusters = await poolRows(env);
+// Scale fix (15 Nov 2026): this job runs every 15 minutes, so it must not pull up to 4,000 rows with their 384-number vectors each time.
+// It now uses the same lean loader as /api/pool (about 1,250 rows) and is loaded ONCE per run, not once per batch of users.
+async function poolForEditions(env, now = new Date()) {
+  const clusters = await leanPoolRows(env, now);
   const notes = await notesForStories(env, clusters.map((story) => story.story_id));
   return { clusters, notes };
 }
+
+const EDITION_CHUNK = 100; // users composed per batch (keeps each Supabase request small)
 
 export async function handleEditionSchedule(env, now = new Date()) {
   const slots = await rows(env, '/rest/v1/rpc/claim_due_edition_slots', {
@@ -439,15 +432,29 @@ export async function handleEditionSchedule(env, now = new Date()) {
     body: JSON.stringify({ p_now: now.toISOString() }),
   });
   if (!slots.length) return;
-  const due = slots.slice(0, 100);
+  // Everybody who shares a delivery time (the default is 07:00 for all new accounts) is due in the SAME 15-minute window.
+  // Before this fix only the first 100 were composed and the rest never got that day's edition.
+  const pool = await poolForEditions(env, now);
+  let failedChunks = 0;
+  for (let start = 0; start < slots.length; start += EDITION_CHUNK) {
+    try {
+      await composeEditionChunk(env, slots.slice(start, start + EDITION_CHUNK), pool, now);
+    } catch (error) {
+      failedChunks++; // one bad batch must not stop the others
+      console.error('briefing edition batch failed', { first_user_index: start, message: String(error?.message || error).slice(0, 200) });
+    }
+  }
+  if (failedChunks) throw new Error(`${failedChunks} edition batch(es) failed; see the log lines above`);
+}
+
+async function composeEditionChunk(env, due, pool, now) {
   const userIds = [...new Set(due.map((slot) => slot.user_id))];
   const filter = inFilter(userIds);
-  const [profiles, watchlist, feedback, previous, pool] = await Promise.all([
+  const [profiles, watchlist, feedback, previous] = await Promise.all([
     rows(env, `/rest/v1/user_profile_v2?user_id=${filter}&select=user_id,role,industry,timezone,delivery_time,delivery_channel,brief_length,interests,blocked_topics,muted_sources,learned_weights`),
     rows(env, `/rest/v1/watchlists?user_id=${filter}&select=user_id,kind,term`),
     rows(env, `/rest/v1/feedback?user_id=${filter}&created_at=gte.${encodeURIComponent(new Date(now.getTime() - 3 * 864e5).toISOString())}&select=user_id,story_id,signal,source`),
     rows(env, `/rest/v1/editions?user_id=${filter}&created_at=gte.${encodeURIComponent(new Date(now.getTime() - 3 * 864e5).toISOString())}&select=user_id,items&limit=1000`),
-    poolForEditions(env),
   ]);
   const profilesByUser = new Map(profiles.map((profile) => [profile.user_id, profile]));
   const watchesByUser = new Map(), feedbackByUser = new Map(), recentByUser = new Map();
