@@ -3,7 +3,7 @@ name: Site health
 # Every 3 hours: is the site up, is the feed full and fresh, is the API alive?
 # Also pings Supabase (free projects pause after 7 idle days).
 # If anything fails you get an email from GitHub, and a Telegram message if you add the two secrets.
-# Secrets used (all optional): SUPABASE_URL, SUPABASE_ANON_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Secrets used (all optional): SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY (for the freshness check), TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 on:
   schedule:
@@ -17,20 +17,36 @@ jobs:
     env:
       SB_URL: ${{ secrets.SUPABASE_URL }}
       SB_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SB_SERVICE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - name: Website answers
         run: curl -fsS --retry 3 --max-time 20 https://binglesignal.com/ -o /dev/null
 
-      - name: Feed is full and fresh
+      - name: Live story teaser is full (served by the Worker from Supabase)
         run: |
-          curl -fsS --retry 3 --max-time 30 https://binglesignal.com/feed.json -o feed.json
+          curl -fsS --retry 3 --max-time 30 https://binglesignal.com/api/teaser -o teaser.json
+          python3 - <<'PY'
+          import json, sys
+          f = json.load(open('teaser.json'))
+          print(f"teaser stories={len(f['items'])}")
+          if len(f['items']) < 20:
+              sys.exit('TEASER EMPTY: the Worker or Supabase is not serving stories')
+          PY
+
+      - name: Briefing is fresh (the 6-hour ingest ran in the last 14 hours)
+        if: ${{ env.SB_SERVICE != '' }}
+        run: |
+          curl -fsS --retry 3 --max-time 30 "$SB_URL/rest/v1/story_clusters?select=updated_at&order=updated_at.desc&limit=1" \
+            -H "apikey: $SB_SERVICE" -H "Authorization: Bearer $SB_SERVICE" -o fresh.json
           python3 - <<'PY'
           import json, sys, datetime as d
-          f = json.load(open('feed.json'))
-          age = (d.datetime.now(d.timezone.utc) - d.datetime.fromisoformat(f['gen'].replace('Z', '+00:00'))).total_seconds() / 3600
-          print(f"stories={len(f['items'])} age_hours={age:.1f}")
-          if len(f['items']) < 50 or age > 14:
-              sys.exit('FEED EMPTY OR STALE')
+          rows = json.load(open('fresh.json'))
+          if not rows:
+              sys.exit('NO STORIES IN THE DATABASE')
+          age = (d.datetime.now(d.timezone.utc) - d.datetime.fromisoformat(rows[0]['updated_at'].replace('Z', '+00:00'))).total_seconds() / 3600
+          print(f"newest ingest write: {age:.1f} hours ago")
+          if age > 14:
+              sys.exit('BRIEFING IS STALE: check the Refresh briefing workflow')
           PY
 
       - name: Payments API answers (skipped until the Worker is live)

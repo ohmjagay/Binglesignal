@@ -1,7 +1,7 @@
 // BingleSignal API: runs on Cloudflare Workers inside the same deploy as the website.
 // Only /api/* reaches this file; every other URL is served straight from /public.
 //   GET  /api/health
-//   GET  /api/teaser             public headline-only teaser of today's top stories (cached 5 minutes)
+//   GET  /api/teaser             public teaser of today's top stories: headline plus a short AI summary for the hover box (cached 5 minutes)
 //   GET  /api/quote              live $5 -> INR quote (+GST) shown on the checkout step in India
 //   POST /api/checkout           logged-in user subscribes to the single Briefing plan -> Razorpay subscription (INR or USD)
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
@@ -437,6 +437,22 @@ export function teaserItems(clusters, limit = 30) {
   return items.sort((a, b) => b.q - a.q).slice(0, limit);
 }
 
+// Plain text only, at most `max` characters, cut at the end of a sentence where possible. Empty when there is nothing worth showing.
+export function cleanSummary(text, max = 460) {
+  const clean = String(text || '').replace(/<[^>]*>/g, ' ').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  if (clean.length < 40) return '';
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max - 1);
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  return end > max * 0.5 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
+}
+
+// The teaser stays a list of headlines; each one also gets its short AI summary (`y`) when there is one, for the hover box on the homepage.
+export function addTeaserSummaries(items, notes) {
+  const summaries = new Map((Array.isArray(notes) ? notes : []).map((note) => [note.story_id, cleanSummary(note.summary)]));
+  return items.map((item) => (summaries.get(item.c) ? { ...item, y: summaries.get(item.c) } : item));
+}
+
 async function handleTeaser(req, env, ctx) {
   const cache = typeof caches !== 'undefined' ? caches.default : null;
   const key = new Request(new URL('/api/teaser', req.url).toString());
@@ -455,8 +471,14 @@ async function handleTeaser(req, env, ctx) {
     return json({ error: 'teaser unavailable' }, 503);
   }
   if (!response.ok) return json({ error: 'teaser unavailable' }, 503);
-  const items = teaserItems(await response.json());
+  let items = teaserItems(await response.json());
   if (!items.length) return json({ error: 'teaser unavailable' }, 503);
+  try { // one small extra lookup for the hover summaries; if it fails, the teaser is simply headlines, as before
+    const notes = await sb(env, `/rest/v1/story_notes?select=story_id,summary&story_id=in.(${items.map((item) => encodeURIComponent(item.c)).join(',')})`);
+    if (notes.ok) items = addTeaserSummaries(items, await notes.json());
+  } catch (error) {
+    console.error('teaser: summaries unavailable:', error?.message || error);
+  }
   const out = new Response(JSON.stringify({ v: 5, gen: new Date().toISOString(), n: items.length, items }), {
     headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300, stale-while-revalidate=600' },
   });
