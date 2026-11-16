@@ -2,14 +2,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
-import { buildInrQuote, gstPercent, usdInrRate, getInrQuote, USD_PRICE, QuoteUnavailable } from '../src/pricing.js';
+import { buildInrQuote, gstPercent, usdInrRate, getInrQuote, inrUnit, USD_PRICE, QuoteUnavailable } from '../src/pricing.js';
 
 const env = {
   SUPABASE_URL: 'https://proj.supabase.co', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service',
+  INR_UNIT_RUPEES: '5',   // the tests in this file were written for the older five-rupee mode; the exact-rupee mode has its own tests
   RAZORPAY_KEY_ID: 'rzp_test_1', RAZORPAY_KEY_SECRET: 'secret',
   RAZORPAY_PLAN_LITE_MONTHLY: 'plan_inr_unit', RAZORPAY_PLAN_LITE_MONTHLY_USD: 'plan_usd_5',
   API_RATE_LIMITS: { idFromName: (name) => name, get: () => ({ fetch: async () => Response.json({ allowed: true }) }) },
 };
+const FIVE = { INR_UNIT_RUPEES: '5' };   // the older mode: a five-rupee plan and totals rounded up to the next 5 rupees
 const USER = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'ria@example.com' };
 const realFetch = globalThis.fetch;
 test.afterEach(() => { globalThis.fetch = realFetch; });
@@ -45,11 +47,11 @@ const reserved = (calls) => calls.some((c) => c.url.includes('/rpc/reserve_payme
 test('The price is $5 and the rupee quote is $5 x the live rate, then GST, in whole rupees', () => {
   assert.equal(USD_PRICE, 5);
   assert.deepEqual(
-    (({ base_inr, gst_percent, gst_inr, rounding_inr, total_inr, quantity }) => ({ base_inr, gst_percent, gst_inr, rounding_inr, total_inr, quantity }))(buildInrQuote(88.4)),
+    (({ base_inr, gst_percent, gst_inr, rounding_inr, total_inr, quantity }) => ({ base_inr, gst_percent, gst_inr, rounding_inr, total_inr, quantity }))(buildInrQuote(88.4, FIVE)),
     { base_inr: 442, gst_percent: 18, gst_inr: 80, rounding_inr: 3, total_inr: 525, quantity: 105 });
-  assert.equal(buildInrQuote(83.333).total_inr, 495);                   // 416.665 -> 417, GST 75.06 -> 75, 492 rounded up to the next 5
-  assert.equal(buildInrQuote(88.4, { GST_PERCENT: '0' }).total_inr, 445); // not registered for GST: no GST is added (442 rounded up to the next 5)
-  assert.equal(buildInrQuote(88.4, { GST_PERCENT: '5' }).gst_inr, 22);
+  assert.equal(buildInrQuote(83.333, FIVE).total_inr, 495);                   // 416.665 -> 417, GST 75.06 -> 75, 492 rounded up to the next 5
+  assert.equal(buildInrQuote(88.4, { ...FIVE, GST_PERCENT: '0' }).total_inr, 445); // not registered for GST: no GST is added (442 rounded up to the next 5)
+  assert.equal(buildInrQuote(88.4, { ...FIVE, GST_PERCENT: '5' }).gst_inr, 22);
 });
 
 test('GST_PERCENT defaults to 18 and ignores nonsense', () => {
@@ -144,9 +146,9 @@ test('Checkout outside India is $5 straight from the USD plan with no exchange-r
 });
 
 test('A rupee total never needs more than the 500 units Razorpay allows, even at an absurd exchange rate', () => {
-  assert.ok(buildInrQuote(300).quantity <= 500);
-  assert.ok(buildInrQuote(93.69).quantity < 150, 'today the INR 552 that failed with a quantity of 552 is now 111 units');
-  assert.throws(() => buildInrQuote(1000000), QuoteUnavailable);
+  assert.ok(buildInrQuote(300, FIVE).quantity <= 500);
+  assert.ok(buildInrQuote(93.69, FIVE).quantity < 150, 'today the INR 552 that failed with a quantity of 552 is now 111 units');
+  assert.throws(() => buildInrQuote(1000000, FIVE), QuoteUnavailable);
 });
 
 test('SAFETY: the old 1-rupee plan is refused now that the INR plan must be exactly INR 5', async () => {
@@ -154,4 +156,56 @@ test('SAFETY: the old 1-rupee plan is refused now that the INR plan must be exac
   const res = await checkout({ interval: 'month', currency: 'INR' }, {}, { RAZORPAY_PLAN_LITE_MONTHLY: 'plan_old_1' });
   assert.equal(res.status, 503);
   assert.equal(Boolean(subscription(calls)), false);
+});
+
+// ===== Exact rupee amounts (the default): a ONE-rupee plan x quantity, so the customer pays 471, not 475 =====
+const EXACT = { INR_UNIT_RUPEES: '1', GST_PERCENT: '0' };
+
+test('By default the customer pays the exact converted amount, to the rupee, with no rounding up', () => {
+  assert.deepEqual(
+    (({ base_inr, gst_inr, rounding_inr, total_inr, unit_inr, quantity }) => ({ base_inr, gst_inr, rounding_inr, total_inr, unit_inr, quantity }))(buildInrQuote(94.25, { GST_PERCENT: '0' })),
+    { base_inr: 471, gst_inr: 0, rounding_inr: 0, total_inr: 471, unit_inr: 1, quantity: 471 });
+  assert.equal(buildInrQuote(88.4, { GST_PERCENT: '0' }).total_inr, 442);
+  assert.equal(buildInrQuote(88.4, { GST_PERCENT: '5' }).total_inr, 464, '442 plus 22 GST, to the rupee');
+});
+
+test('INR_UNIT_RUPEES: only the value 5 switches to the older rounded mode; anything else stays exact', () => {
+  assert.equal(inrUnit({}), 1);
+  assert.equal(inrUnit({ INR_UNIT_RUPEES: '5' }), 5);
+  assert.equal(inrUnit({ INR_UNIT_RUPEES: 5 }), 5);
+  for (const odd of ['', '1', '2', 'abc', '0', '-5', '50']) assert.equal(inrUnit({ INR_UNIT_RUPEES: odd }), 1, `"${odd}"`);
+});
+
+test('A one-rupee plan can bill at most INR 500: above that the rupee option is withheld, never guessed', () => {
+  assert.equal(buildInrQuote(100, { GST_PERCENT: '0' }).total_inr, 500);
+  assert.throws(() => buildInrQuote(100.2, { GST_PERCENT: '0' }), QuoteUnavailable);
+  assert.throws(() => buildInrQuote(94.25), QuoteUnavailable, 'with the default 18% GST the total passes 500: use INR_UNIT_RUPEES=5');
+  assert.equal(buildInrQuote(94.25, FIVE).total_inr, 560, 'the five-rupee mode still copes: 471 + 85 GST = 556, rounded up to 560');
+});
+
+test('GET /api/quote in exact mode shows the same rupees the checkout will charge', async () => {
+  fakeNetwork(checkoutRoutes({ rate: 94.25 }));
+  const body = await (await worker.fetch(new Request('https://binglesignal.com/api/quote', { headers: { 'cf-ipcountry': 'IN' } }), { ...env, ...EXACT })).json();
+  assert.deepEqual({ base: body.inr.base_inr, rounding: body.inr.rounding_inr, total: body.inr.total_inr, quantity: body.inr.quantity }, { base: 471, rounding: 0, total: 471, quantity: 471 });
+});
+
+test('Checkout in exact mode: quantity x the ONE-rupee plan is exactly the total the customer saw', async () => {
+  const calls = fakeNetwork(checkoutRoutes({ rate: 94.25, planAmount: 100 }));
+  const res = await checkout({ interval: 'month', currency: 'INR', expected_total_inr: 471 }, {}, EXACT);
+  assert.equal(res.status, 200);
+  const sub = subscription(calls);
+  assert.equal(sub.body.plan_id, 'plan_inr_unit');
+  assert.equal(sub.body.quantity, 471);
+  assert.deepEqual((({ total_inr, rounding_inr, unit_inr }) => ({ total_inr, rounding_inr, unit_inr }))(sub.body.notes), { total_inr: '471', rounding_inr: '0', unit_inr: '1' });
+});
+
+test('SAFETY (exact mode): only a plan of exactly INR 1.00 is accepted; the five-rupee plan and the old 299-rupee plan are refused', async () => {
+  for (const planAmount of [500, 29900, 200]) {
+    const calls = fakeNetwork(checkoutRoutes({ rate: 94.25, planAmount }));
+    const res = await checkout({ interval: 'month', currency: 'INR' }, {}, { ...EXACT, RAZORPAY_PLAN_LITE_MONTHLY: `plan_other_${planAmount}` });
+    assert.equal(res.status, 503, `a plan of ${planAmount / 100} rupees`);
+    assert.match((await res.json()).error, /not set up correctly/);
+    assert.equal(reserved(calls), false);
+    assert.equal(Boolean(subscription(calls)), false);
+  }
 });

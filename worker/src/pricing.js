@@ -4,13 +4,15 @@
 //   India          -> the visitor chooses USD ($5.00) or rupees. Rupees are worked out live:
 //                       base     = round( $5 x today's USD->INR rate )        (whole rupees)
 //                       GST      = round( base x GST_PERCENT / 100 )          (whole rupees)
-//                       rounding = up to the next INR 5
-//                       total    = base + GST + rounding                      <- what the customer pays every month
+//                       total    = base + GST                                 <- what the customer pays every month, to the rupee
+//                       (only in the older INR_UNIT_RUPEES=5 mode is the total also rounded up to the next INR 5)
 //
 // HOW THE RUPEE AMOUNT REACHES RAZORPAY
 // A Razorpay plan has a fixed price, but a Razorpay subscription can be created with a `quantity`
-// (amount charged = plan amount x quantity, and Razorpay allows a quantity of at most 500). So the INR plan in Razorpay is a FIVE-RUPEE "unit" plan and each
-// new subscriber gets quantity = their total / 5 (about 110 today, 500 would be INR 2,500). The rupee amount is fixed when they subscribe and stays the same every month.
+// (amount charged = plan amount x quantity). So the INR plan in Razorpay is a ONE-RUPEE "unit" plan and each new subscriber gets
+// quantity = their total in rupees (about 471 today). The rupee amount is fixed when they subscribe and stays the same every month.
+// This code keeps its own safety ceiling of 500 units per subscription (so INR 500 with a one-rupee plan). If the total would pass it (a rate above about 100,
+// or GST switched on) the rupee option is withheld and dollars are offered; then set INR_UNIT_RUPEES=5 in Cloudflare and use a FIVE-rupee plan (ceiling INR 2,500).
 //
 // Change the price here (USD_PRICE) AND in public/config.js (price.usd) AND in the Razorpay USD plan: all three must say 5.
 
@@ -19,9 +21,13 @@ export const DEFAULT_GST_PERCENT = 18;
 const RATE_MIN = 40;            // anything outside this range is treated as a broken feed, never as a price
 const RATE_MAX = 300;
 const RATE_TTL_SECONDS = 3600;  // reference rates change once a day; an hour of caching also keeps us inside the free API limits
-export const UNIT_RUPEES = 5;   // the INR plan MUST be exactly INR 5.00 a month; the customer's total is always a multiple of this
-export const MAX_QUANTITY = 500; // Razorpay's own limit on a subscription quantity
-const UNIT_PLAN_PAISE = UNIT_RUPEES * 100;
+export const MAX_QUANTITY = 500; // our own safety ceiling on a subscription quantity (Razorpay's docs name no maximum, only a minimum of 1)
+
+// INR_UNIT_RUPEES (optional): 1 (the default) = the customer pays the exact converted amount and the INR plan in Razorpay is a ONE-rupee plan.
+// 5 = the older mode: a FIVE-rupee plan, and the total is rounded up to the next 5 rupees. Anything else counts as 1.
+export function inrUnit(env = {}) {
+  return Number(env.INR_UNIT_RUPEES) === 5 ? 5 : 1;
+}
 
 export class QuoteUnavailable extends Error {
   constructor(message = 'Live exchange rate unavailable') { super(message); this.name = 'QuoteUnavailable'; }
@@ -43,8 +49,12 @@ export function buildInrQuote(rate, env = {}, meta = {}) {
   const base = Math.round(USD_PRICE * rate);
   const gstInr = Math.round(base * gst / 100);
   const subtotal = base + gstInr;
-  const total = Math.ceil(subtotal / UNIT_RUPEES) * UNIT_RUPEES;
-  if (total / UNIT_RUPEES > MAX_QUANTITY) throw new QuoteUnavailable('Rupee total is outside what Razorpay can bill');
+  const unit = inrUnit(env);
+  const total = Math.ceil(subtotal / unit) * unit;
+  if (total / unit > MAX_QUANTITY) {
+    console.error(`Rupee total INR ${total} needs quantity ${total / unit}, above our ceiling of ${MAX_QUANTITY}. Set INR_UNIT_RUPEES=5 and use a five-rupee INR plan.`);
+    throw new QuoteUnavailable('Rupee total is outside what Razorpay can bill');
+  }
   return {
     usd: USD_PRICE,
     rate: Math.round(rate * 10000) / 10000,
@@ -53,8 +63,8 @@ export function buildInrQuote(rate, env = {}, meta = {}) {
     gst_inr: gstInr,
     rounding_inr: total - subtotal,
     total_inr: total,
-    unit_inr: UNIT_RUPEES,
-    quantity: total / UNIT_RUPEES,
+    unit_inr: unit,
+    quantity: total / unit,
     source: meta.source || '',
     as_of: meta.at || new Date().toISOString(),
   };
@@ -106,21 +116,23 @@ export async function getInrQuote(env = {}) {
   return buildInrQuote(rate, env, { source, at });
 }
 
-// Safety net: quantity pricing is only correct if the INR plan really is a one-rupee plan.
-// Without this check an old 299-rupee (or 1-rupee) plan in RAZORPAY_PLAN_LITE_MONTHLY would charge the wrong amount.
+// Safety net: quantity pricing is only correct if the INR plan really is the unit plan (one rupee, or five in the older mode).
+// Without this check an old 299-rupee plan in RAZORPAY_PLAN_LITE_MONTHLY would charge the wrong amount.
 const verifiedPlans = new Map();
 export async function assertInrUnitPlan(env, planId) {
-  if (verifiedPlans.get(planId) === true) return;
+  const unit = inrUnit(env);
+  const memo = `${planId}|${unit}`;
+  if (verifiedPlans.get(memo) === true) return;
   const response = await fetch(`https://api.razorpay.com/v1/plans/${encodeURIComponent(planId)}`, {
     headers: { authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },
   });
   if (!response.ok) throw new PlanMisconfigured(`Razorpay could not read the INR plan (${response.status})`);
   const plan = await response.json();
   const item = plan?.item || {};
-  if (item.currency !== 'INR' || Number(item.amount) !== UNIT_PLAN_PAISE) {
-    throw new PlanMisconfigured(`RAZORPAY_PLAN_LITE_MONTHLY must be a plan of exactly INR 5.00 per month (found ${item.currency} ${Number(item.amount) / 100})`);
+  if (item.currency !== 'INR' || Number(item.amount) !== unit * 100) {
+    throw new PlanMisconfigured(`RAZORPAY_PLAN_LITE_MONTHLY must be a plan of exactly INR ${unit}.00 per month (found ${item.currency} ${Number(item.amount) / 100})`);
   }
-  verifiedPlans.set(planId, true);
+  verifiedPlans.set(memo, true);
 }
 
 // GET /api/quote  -> what the checkout page shows. Nothing here can change what is charged: /api/checkout recomputes everything itself.

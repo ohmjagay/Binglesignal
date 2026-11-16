@@ -45,7 +45,7 @@ window.BS={
  supabaseKey:'sb_publishable_A6eZtpdfkTkpID-kwzpW5w_edwnLOxa', // public "publishable" key: safe to publish. NEVER paste a service_role key here.
  turnstileSiteKey:'0x4AAAAAAF1xufF2REJahy8J', // public Cloudflare Turnstile site key; set after adding CAPTCHA in Supabase Auth.
  readCap:200,  // stories in READ (same for every subscriber: there is one plan)
- watchCap:30,  // videos in WATCH
+ watchCap:200,  // videos in WATCH
  company:'BingleSignal',
  // Fill these in later (leave '' to hide). Example: email:'hello@binglesignal.com', x:'binglesignal', linkedin:'binglesignal', instagram:'binglesignal', youtube:'binglesignal'
  email:'support@binglesignal.com', x:'', linkedin:'https://www.linkedin.com/company/binglesignal/', instagram:'', youtube:''
