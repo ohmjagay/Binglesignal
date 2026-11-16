@@ -1,5 +1,5 @@
 # Site (everything in /public) + payments API (/api/* handled by worker/src/index.js) in ONE deploy.
-name = "binglesignal"
+name = "binglesignalv1"
 main = "worker/src/index.js"
 compatibility_date = "2025-10-01"
 # Keep variables you typed in the Cloudflare dashboard when this file is deployed. Without this line a deploy can silently
