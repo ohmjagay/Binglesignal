@@ -36,13 +36,16 @@ addEventListener('pagehide',()=>store.set('bs4',PR));
 const SB=BS.supabaseUrl,KEY=BS.supabaseKey;let S=store.get('bs_sess'),pt;
 async function api(path,o={}){let r;try{r=await fetch(SB+path,{method:o.m||'GET',headers:{apikey:KEY,'Content-Type':'application/json',...(o.t?{Authorization:'Bearer '+o.t}:{}),...(o.h||{})},body:o.b?JSON.stringify(o.b):undefined})}catch{throw new Error('Network problem - please check your connection and try again.')}
  let j=null;try{j=await r.json()}catch{}
- if(!r.ok)throw new Error(j?.msg||j?.error_description||j?.message||j?.error||'Something went wrong ('+r.status+')');return j}
+ if(!r.ok)throw Object.assign(new Error(j?.msg||j?.error_description||j?.message||j?.error||'Something went wrong ('+r.status+')'),{status:r.status});return j}
 function jwtExpiry(value){try{const p=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');return Number(JSON.parse(atob(p.padEnd(Math.ceil(p.length/4)*4,'='))).exp)*1000||0}catch{return 0}}
 function jwtAal(value){try{const p=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');return JSON.parse(atob(p.padEnd(Math.ceil(p.length/4)*4,'='))).aal||''}catch{return''}}
 function setSess(j){const localExpiry=Date.now()+(+j.expires_in||3600)*1000,jwtExp=jwtExpiry(j.access_token);S={at:j.access_token,rt:j.refresh_token,exp:jwtExp?Math.min(localExpiry,jwtExp):localExpiry,u:j.user||S?.u||null};store.set('bs_sess',S);paintHs();return S}
 function drop(){S=null;store.del('bs_sess');paintHs()}
 async function token(forceRefresh=false){if(!S)return null;const expiry=Math.min(Number(S.exp)||Infinity,jwtExpiry(S.at)||Infinity);if(forceRefresh||!Number.isFinite(expiry)||Date.now()>=expiry-60000){try{if(!S.rt)throw new Error('Refresh token is missing');setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
-async function loadUser(){const t=await token();if(!t)return;S.u=await api('/auth/v1/user',{t});store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
+// A saved session whose user no longer exists (deleted, project reset) must not trap anyone: it is dropped and they are asked to sign in again.
+const deadSession=e=>!!e&&(e.status===401||e.status===403||/sub claim in JWT does not exist|invalid JWT|JWT (is )?expired|session.{0,12}not.{0,6}found|user.{0,12}not.{0,6}found/i.test(e.message||''));
+function expired(){if(/^#\/(me|account|manage|pricing|onboarding)/.test(location.hash))openAuth('Your session ended. Please sign in again.','in')}
+async function loadUser(){const t=await token();if(!t)return;try{S.u=await api('/auth/v1/user',{t})}catch(e){if(deadSession(e)){drop();expired()}throw e}store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
 async function mfaFactors(accessToken=S?.at){
  return listMfaFactors(api,accessToken);
 }
@@ -150,8 +153,8 @@ export function openAuth(msg,mode='up'){
 export function tune(){if(!P.sel.length)return'Pick at least one interest first.';savePrefs();if(S){location.hash='#/me/read';return''}openAuth(`Almost there${P.name?', '+P.name:''} - create your free account to unlock your personal Read and Watch feeds.`,'up');return''}
 
 /* ---------- header and footer ---------- */
-function paintHs(){const h=$('#hs');if(h)h.innerHTML=S?'<a class="btn fill sm" href="#/me/read">My briefing</a>':'<button class="link" id="si">Sign in</button>';document.dispatchEvent(new Event('bs:auth'))}
-document.addEventListener('click',e=>{if(e.target.id==='si')openAuth('Welcome back - sign in to open your personal briefing.','in')});
+function paintHs(){const h=$('#hs');if(h)h.innerHTML=S?'<a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" id="so2">Sign out</button>':'<button class="link" id="si">Sign in</button>';document.dispatchEvent(new Event('bs:auth'))}
+document.addEventListener('click',e=>{if(e.target.id==='si')openAuth('Welcome back - sign in to open your personal briefing.','in');else if(e.target.id==='so2')out()});
 function paintFooter(){const f=$('#foot'),L=[];if(!f)return;if(BS.email)L.push(`<a href="mailto:${esc(BS.email)}">${esc(BS.email)}</a>`);
  const soc=(k,u,n)=>{const v=BS[k];if(v)L.push(`<a href="${/^https?:/.test(v)?esc(v):u+esc(v)}" target="_blank" rel="noopener noreferrer">${n}</a>`)};
  soc('x','https://x.com/','X');soc('linkedin','https://www.linkedin.com/company/','LinkedIn');soc('instagram','https://instagram.com/','Instagram');soc('youtube','https://youtube.com/@','YouTube');
@@ -227,8 +230,8 @@ function renderRead(){
  const cnt={};READ.forEach(c=>cnt[c.i.p]=(cnt[c.i.p]||0)+1);
  $('#am').innerHTML=summary(READ.length,POOL.items.filter(i=>!i.v).length)+`<div class="pills"><button class="chip${PF==='all'?' on':''}" data-a="pf" data-k="all">All ${READ.length}</button>${Object.keys(cnt).map(k=>`<button class="chip${PF===k?' on':''}" data-a="pf" data-k="${k}">${PL[k]} ${cnt[k]}</button>`).join('')}</div><div id="rl"></div><div id="sent"></div>`;
  obs=new IntersectionObserver(es=>{for(const e of es){const id=e.target.dataset.id,i=ITEM[id];if(!i)continue;
-  if(e.isIntersecting&&e.intersectionRatio>=.6){VIS.set(id,Date.now());PR.seen[id]=Date.now()}
-  else if(VIS.has(id)){const d=Date.now()-VIS.get(id);VIS.delete(id);if(!ACT.has(id)&&SK<40){SK++;if(d<900)learn(i,{k:1,c:0},-.08,1);else if(d>4000)learn(i,{c:.6},.08,1)}}}},{threshold:[0,.6]});
+  if(e.isIntersecting&&e.intersectionRatio>=.6){VIS.set(id,Date.now());if(!PR.seen[id])FIRST.add(id);PR.seen[id]=Date.now()}
+  else if(VIS.has(id)){const d=Date.now()-VIS.get(id);VIS.delete(id);if(FIRST.delete(id))tally(d);if(!ACT.has(id)&&SK<40){SK++;if(d<900)learn(i,{k:1,c:0},-.08,1);else if(d>4000)learn(i,{c:.6},.08,1)}}}},{threshold:[0,.6]});
  sobs?.disconnect();sobs=new IntersectionObserver(es=>{if(es[0].isIntersecting)more()},{rootMargin:'700px'});more();sobs.observe($('#sent'))}
 function more(){const L=list(),box=$('#rl'),s=$('#sent');if(!box||!s)return;const part=L.slice(SHOWN,SHOWN+20);
  if(part.length){box.insertAdjacentHTML('beforeend',part.map(cardR).join(''));SHOWN+=part.length;part.forEach(c=>{const el=box.querySelector(`[data-id="${c.i.id}"]`);if(el){el.insertAdjacentHTML('beforeend','<button data-a="mute">Mute source</button>');obs.observe(el)}})}
@@ -258,7 +261,7 @@ async function recordEditionCompletion(){
  }catch(error){console.warn('Edition completion event failed',{status_code:error.statusCode||0})}
 }
 function renderWatch(){
- const cap=BS.watchCap||30,W=capPerKey(rank(POOL.items,cap+12,true),c=>c.i.s,3).slice(0,cap); // at most 3 videos per channel up front
+ const cap=BS.watchCap||200,W=capPerKey(rank(POOL.items,cap+12,true),c=>c.i.s,3).slice(0,cap); // at most 3 videos per channel up front
 
  $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
 async function emailApi(path,method='GET',body){
@@ -383,9 +386,23 @@ function reTail(){if(TAB!=='read')return;const keep=READ.slice(0,SHOWN),ids=new 
 function sendFeedback(i,signal,source){token().then(t=>api('/api/feedback',{m:'POST',t,b:{story_id:i.c||i.id,signal,...(source?{source}:{})}}))
  .then(()=>{let status=$('#feedback-status');if(!status){status=document.createElement('p');status.className='email-message';status.setAttribute('role','status');$('#am')?.prepend(status)}status.textContent='Thanks — your briefing will adapt to this feedback.'})
  .catch(error=>{let status=$('#feedback-status');if(!status){status=document.createElement('p');status.className='email-message';status.setAttribute('role','status');$('#am')?.prepend(status)}if(status)status.textContent=error.message})}
-function like(i){const x=PR.lk.indexOf(i.id);if(x>=0){PR.lk.splice(x,1);persist();return false}PR.lk.push(i.id);ACT.add(i.id);learn(i,{c:1,l:1},1.2);sendFeedback(i,'like');reTail();return true}
-function save(i){const x=PR.sv.indexOf(i.id);if(x>=0){PR.sv.splice(x,1);persist();return false}PR.sv.push(i.id);ACT.add(i.id);learn(i,{c:1,s:1},1.5);sendFeedback(i,'save');reTail();return true}
-function hide(i,signal='less_like',source){PR.hid.push(i.id);ACT.add(i.id);learn(i,{k:1},-1.5);sendFeedback(i,signal,source);reTail()}
+// What the Manage account page lists: a small snapshot of each story you liked, saved or hid, so it can still be named after it leaves the feed.
+function remember(i){const m=PR.meta||(PR.meta={});if(i?.id&&i.t)m[i.id]={t:i.t,u:i.u||'',s:i.s||''};const ks=Object.keys(m);if(ks.length>400)for(const k of ks.slice(0,ks.length-400))delete m[k]}
+async function myLists(){
+ const src={liked:PR.lk,saved:PR.sv,hidden:PR.hid},ids=[...new Set([...PR.lk,...PR.sv,...PR.hid])],named=id=>PR.meta?.[id]?.t||ITEM[id]?.t;
+ if(ids.some(id=>!named(id))&&!POOL){try{await loadPool()}catch{}}
+ let fixed=false;for(const id of ids)if(!PR.meta?.[id]?.t&&ITEM[id]?.t){remember(ITEM[id]);fixed=true}
+ if(fixed)persist();
+ const row=id=>{const m=PR.meta?.[id]||ITEM[id]||{};return{id,t:m.t||'',u:m.u||'',s:m.s||''}};
+ return Object.fromEntries(Object.entries(src).map(([k,a])=>[k,[...new Set(a)].reverse().map(row)]))
+}
+function forgetItem(kind,id){const key={liked:'lk',saved:'sv',hidden:'hid'}[kind];if(!key)return false;const x=PR[key].indexOf(id);if(x<0)return false;PR[key].splice(x,1);persist();return true}
+// Time saved is MEASURED: every story whose summary stayed on screen for at least a second is counted once, with the seconds it was on screen.
+const FIRST=new Set();
+function tally(ms){if(ms<900)return;const m=PR.tm||(PR.tm={n:0,s:0});m.n++;m.s+=Math.min(ms/1000,90);persist()}
+function like(i){const x=PR.lk.indexOf(i.id);if(x>=0){PR.lk.splice(x,1);persist();return false}PR.lk.push(i.id);remember(i);ACT.add(i.id);learn(i,{c:1,l:1},1.2);sendFeedback(i,'like');reTail();return true}
+function save(i){const x=PR.sv.indexOf(i.id);if(x>=0){PR.sv.splice(x,1);persist();return false}PR.sv.push(i.id);remember(i);ACT.add(i.id);learn(i,{c:1,s:1},1.5);sendFeedback(i,'save');reTail();return true}
+function hide(i,signal='less_like',source){PR.hid.push(i.id);remember(i);ACT.add(i.id);learn(i,{k:1},-1.5);sendFeedback(i,signal,source);reTail()}
 function play(i){
  ACT.add(i.id);let dur=0,st=-1,watched=0,got=false;const t0=Date.now(),
  m=modal(`<div class="pw"><iframe id="yt" src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(i.vid)}?autoplay=1&rel=0&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}" title="${esc(i.t)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div><h3 class="serif" style="margin:14px 0 4px">${esc(i.t)}</h3><small>${esc(i.s)} · <a href="https://www.youtube.com/watch?v=${encodeURIComponent(i.vid)}" target="_blank" rel="noopener noreferrer">Open on YouTube</a></small><div class="acts"><span></span><span><button data-a="like">♥ Like</button><button data-a="hide">✕ Not for me</button></span></div>`,'vid'),
@@ -406,7 +423,7 @@ $('#app').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.ta
 export async function route(){
  const rid=++RID;obs?.disconnect();sobs?.disconnect();VIS.clear();
  const r=fromHash();
- if(/^#\/(pricing|paused|account)(\/|$)/.test(location.hash))return;
+ if(/^#\/(pricing|paused|account|manage)(\/|$)/.test(location.hash))return;
  if(r==='ok'){await entered();return}
  if(r)openAuth('Sign-in did not complete: '+r,'in');
  if(/^#\/email(?:\?|$)/.test(location.hash)&&!BS.emailBeta){location.hash='#/me/read';return}
@@ -427,10 +444,15 @@ window.BSAuth={
  token:()=>token(),
  user:()=>S?.u||null,
  has:()=>!!S,
+ out:()=>out(),
+ expired:()=>{drop();expired()},
+ lists:()=>myLists(),
+ forget:(kind,id)=>forgetItem(kind,id),
+ stats:()=>({stories:PR.tm?.n||0,seconds:Math.round(PR.tm?.s||0)}),
  assurance:()=>jwtAal(S?.at||''),
  factors:()=>mfaFactors(),
  enrollTotp:()=>api('/auth/v1/factors',{m:'POST',t:S?.at,b:{factor_type:'totp',friendly_name:'BingleSignal mailbox protection'}}),
  verifyTotp:async(id,code)=>{const session=await verifyTotp(id,code);if(!session.access_token)throw new Error('Multi-factor verification did not return a valid session.');setSess(session);return session}
 };
 paintHs();paintFooter();addEventListener('hashchange',route);
-(async()=>{if(S&&!S.u)await loadUser().catch(()=>{});await route();if(S)pull().then(c=>{if(c){document.dispatchEvent(new Event('bs:prefs'));if(!$('#app').hidden)route()}})})();
+(async()=>{if(S)await loadUser().catch(()=>{});await route();if(S)pull().then(c=>{if(c){document.dispatchEvent(new Event('bs:prefs'));if(!$('#app').hidden)route()}})})();

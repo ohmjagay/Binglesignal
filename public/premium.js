@@ -66,7 +66,7 @@ function paintBanner() {
 const brandHTML = () => { const a = document.querySelector('#home .brand'); return a ? '<a class="brand serif" href="#/">' + a.innerHTML.replace('id="g"', 'id="g3"').replace('url(#g)', 'url(#g3)') + '</a>' : '<a class="brand serif" href="#/"><span>Bingle<em>Signal</em></span></a>'; };
 function frame(inner) {
   const p = $('#px');
-  p.innerHTML = `<header class="top"><div class="wrap bar">${brandHTML()}<nav class="hdr-r"><a class="link" href="#/pricing">Pricing</a>${authed() ? '<a class="link" href="#/account">Account</a><a class="btn fill sm" href="#/me/read">My briefing</a>' : '<a class="btn fill sm" href="#/me/read">Sign in</a>'}</nav></div></header><main class="pxw">${inner}</main>`;
+  p.innerHTML = `<header class="top"><div class="wrap bar">${brandHTML()}<nav class="hdr-r"><a class="link" href="#/pricing">Pricing</a>${authed() ? '<a class="link" href="#/account">Account</a><a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" data-so>Sign out</button>' : '<a class="btn fill sm" href="#/me/read">Sign in</a>'}</nav></div></header><main class="pxw">${inner}</main>`;
   p.hidden = false; $('#home').hidden = true; $('#app').hidden = true; window.scrollTo(0, 0);
 }
 
@@ -127,20 +127,34 @@ async function checkout(currency) {
     if (currency === 'INR' && QUOTE?.inr) body.expected_total_inr = QUOTE.inr.total_inr;   // the price the customer just saw: the server refuses if the rate moved since
     const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { window.BSAuth.expired(); msg('Your session ended. Please sign in again, then press Subscribe once more.'); return; }
     if (r.status === 409 && j.code === 'rate_changed' && j.quote) { QUOTE = { inr: j.quote }; NOTICE = j.error; await pricing(); return; }
     if (!r.ok) throw new Error(j.error || 'checkout failed');
     if (j.provider === 'global') { opened = true; location.href = j.url; return; } // an old, still-open checkout from the previous provider
     await loadScript('https://checkout.razorpay.com/v1/checkout.js');
-    new window.Razorpay({ key: j.key_id, subscription_id: j.subscription_id, name: 'BingleSignal', description: PLAN_NAME, prefill: { email: window.BSAuth.user()?.email || '' }, theme: { color: '#D4B46A' }, handler: () => { activating(); }, modal: { ondismiss: () => { busy = false; } } }).open();
+    new window.Razorpay({ key: j.key_id, subscription_id: j.subscription_id, name: 'BingleSignal', description: PLAN_NAME, prefill: { email: window.BSAuth.user()?.email || '' }, theme: { color: '#D4B46A' }, handler: (response) => { activating(response?.razorpay_payment_id); }, modal: { ondismiss: () => { busy = false; } } }).open();
     opened = true;
   } catch (err) { msg('Could not start checkout: ' + err.message + '. Please try again, or email us and we will set it up.'); }
   finally { if (!opened) busy = false; }
 }
 
-async function activating() {
-  frame('<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag" id="pxmsg">Activating your plan…</p></section>');
-  for (let i = 0; i < 20; i++) { await new Promise((r) => setTimeout(r, 3000)); await loadAccess(); if (ACC?.status === 'active') break; }
-  busy = false; location.hash = '#/account';
+const POLL_MS = Number(BS.pollMs) > 0 ? Number(BS.pollMs) : 3000;   // how often we ask "is the plan active yet?"
+async function activating(paymentId) {
+  frame('<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag" id="pxmsg">Confirming your payment with Razorpay. This usually takes a few seconds, so please stay on this page…</p></section>');
+  for (let i = 0; i < 60; i++) {   // about three minutes
+    await new Promise((r) => setTimeout(r, POLL_MS));
+    await loadAccess();
+    if (ACC?.status === 'active') { busy = false; return welcome(); }
+  }
+  busy = false; stillWaiting(paymentId);
+}
+
+function welcome() {
+  frame('<section class="pxh"><h1 class="serif">You are in. Welcome to BingleSignal.</h1><p class="tag">Your plan is active. Start reading now, or tell us what matters to you first so your briefing is ranked for you from the very first story.</p></section><div class="plans"><article class="card plan hot"><a class="btn fill wide" href="#/me/read">Start my briefing</a><button class="btn wide" data-personalize>Personalize my priorities</button></article></div>');
+}
+
+function stillWaiting(paymentId) {
+  frame(`<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag">Your bank has confirmed the payment, but switching your plan on is taking longer than usual. You do not need to pay again: your plan unlocks by itself as soon as Razorpay confirms it.${paymentId ? ' Reference: ' + esc(paymentId) + '.' : ''}</p></section><div class="plans"><article class="card"><button class="btn fill wide" data-recheck>Check again</button><a class="btn wide" href="/contact">Contact us</a></article></div>`);
 }
 
 // Public headlines: live from the Worker first, the static file as a backup. Never throws.
@@ -164,25 +178,10 @@ async function paused() {
   frame(`<section class="pxh"><h1 class="serif">Subscribe to read your briefing</h1><p class="tag">Your settings are saved. Choose a plan and your briefing starts straight away.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
 }
 
-async function loadUsageMetrics() {
-  const output = $('#time-saved');
-  if (!output) return;
-  try {
-    const token = await window.BSAuth.token();
-    const response = await fetch('/api/metrics', { headers: { authorization: 'Bearer ' + token } });
-    if (!response.ok) throw Object.assign(new Error(), { statusCode: response.status });
-    const metrics = (await response.json()).metrics || {};
-    output.textContent = `You've completed ${Number(metrics.completed_editions) || 0} briefings and saved about ${Number(metrics.time_saved_minutes) || 0} minutes. Estimate: 3 minutes per completed briefing.`;
-  } catch (error) {
-    output.textContent = 'Your usage estimate is unavailable right now.';
-    console.warn('Usage metrics could not be loaded', { status_code: error.statusCode || 0 });
-  }
-}
-
 async function account() {
   if (!authed()) { location.hash = '#/me/read'; return; }
   await acc.ready; const a = ACC;
-  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'No plan' };
+  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'Not subscribed' };
   let body = '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
   if (a) {
     const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`
@@ -190,10 +189,52 @@ async function account() {
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
     body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '' : '<a class="btn" href="#/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
-  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">Loading your estimate…</p></section><section class="card"><h2 class="serif">Account security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
-  await refreshMfaStatus();
-  await loadUsageMetrics();
-  $('#mfa-enrollment-form').onsubmit = verifyMfaEnrollment;
+  frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">${timeSavedHTML()}</p><p class="mu fine">How it is measured: the stories you read × ${ART_MIN} minutes (about how long an original article takes) minus the time you actually spent on their summaries.</p></section><section class="card"><h2 class="serif">Manage account</h2><p class="mu">See the stories you liked, saved or marked not interested, and your subscription plan.</p><p><a class="btn fill" href="#/manage">Manage account</a> <button class="btn" data-so>Sign out</button></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
+}
+
+// ---------- time saved: measured, not guessed ----------
+const ART_MIN = Number(BS.articleMinutes) > 0 ? Number(BS.articleMinutes) : 3;   // minutes an original article takes to read; change it in config.js (articleMinutes)
+const hm = (m) => { m = Math.max(0, Math.round(m)); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
+function timeSavedHTML() {
+  const s = window.BSAuth.stats?.() || { stories: 0, seconds: 0 };
+  if (!s.stories) return 'Nothing measured yet. Read a few stories in your briefing: we time how long each summary takes you and compare that with reading the originals.';
+  const spent = s.seconds / 60, would = s.stories * ART_MIN, saved = Math.max(0, would - spent);
+  return `You have saved about <b>${hm(saved)}</b>. You read <b>${s.stories}</b> story summar${s.stories === 1 ? 'y' : 'ies'} in about ${hm(spent)}; the originals would have taken about ${hm(would)} (${s.stories} × ${ART_MIN} min).`;
+}
+
+// ---------- Manage account: liked, saved, not interested, subscription, security ----------
+const KINDS = [['liked', 'Liked', 'Unlike'], ['saved', 'Saved', 'Remove'], ['hidden', 'Not interested', 'Show again']];
+const EMPTY = { liked: 'Stories you like will be listed here.', saved: 'Stories you save will be listed here.', hidden: 'Stories you mark not interested will be listed here, so you can bring them back.' };
+const SECURITY_HTML = `<h2 class="serif">Security</h2><p id="mfa-status" class="mu" role="status">Checking your authenticator settings…</p><button class="btn" id="mfa-start">Set up authenticator</button><div id="mfa-enrollment" hidden><p>In your authenticator app choose “add account” and enter this setup key:</p><p><code id="mfa-secret"></code></p><form id="mfa-enrollment-form"><label>6-digit code<input id="mfa-enrollment-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label><button class="btn fill" type="submit">Verify authenticator</button></form></div><p id="mfa-message" class="mu" role="status"></p>`;
+let MTAB = 'liked';
+const safeUrl = (u) => (/^https?:\/\//i.test(u || '') ? esc(u) : '#');
+
+function planHTML(a) {
+  if (!a) return '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
+  const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'Not subscribed' };
+  const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`
+    : a.status === 'active' ? `Briefing plan, $${USD} a month.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
+    : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : 'You are not subscribed yet.';
+  return `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : '<a class="btn fill" href="#/pricing">Subscribe</a>'}</p><p id="pxmsg" class="mu" role="status"></p>`;
+}
+
+async function manage() {
+  if (!authed()) { location.hash = '#/me/read'; return; }
+  await acc.ready;
+  let lists = { liked: [], saved: [], hidden: [] };
+  try { lists = await window.BSAuth.lists(); } catch { /* an empty list is better than a broken page */ }
+  const tab = (k, name, n) => `<button class="chip${MTAB === k ? ' on' : ''}" data-mt="${k}" aria-pressed="${MTAB === k}">${name}${n === undefined ? '' : ' ' + n}</button>`;
+  const tabs = KINDS.map(([k, name]) => tab(k, name, lists[k].length)).join('') + tab('plan', 'Subscription') + tab('security', 'Security');
+  let inner;
+  if (MTAB === 'plan') inner = planHTML(ACC);
+  else if (MTAB === 'security') inner = SECURITY_HTML;
+  else {
+    const undo = KINDS.find(([k]) => k === MTAB)[2], rows = lists[MTAB] || [];
+    inner = rows.length ? rows.map((r) => `<div class="mrow"><div>${r.t ? `<a href="${safeUrl(r.u)}" target="_blank" rel="noopener noreferrer">${esc(r.t)}</a>` : '<span class="mu">A story that has left your feed</span>'}${r.s ? `<small class="mu">${esc(r.s)}</small>` : ''}</div><button class="btn sm" data-um="${MTAB}" data-id="${esc(r.id)}">${undo}</button></div>`).join('')
+      : `<p class="mu">${EMPTY[MTAB]}</p>`;
+  }
+  frame(`<section class="pxh"><h1 class="serif">Manage account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="chips mtabs" role="group" aria-label="Manage account sections">${tabs}</div><section class="card">${inner}</section><p class="mu fine"><a href="#/account">Back to your account</a></p>`);
+  if (MTAB === 'security') { refreshMfaStatus(); const f = $('#mfa-enrollment-form'); if (f) f.onsubmit = verifyMfaEnrollment; }
 }
 
 async function refreshMfaStatus() {
@@ -302,18 +343,24 @@ async function page() {
   if (/^#\/pricing/.test(h)) return pricing();
   if (/^#\/paused/.test(h)) return paused();
   if (/^#\/account/.test(h)) return account();
+  if (/^#\/manage/.test(h)) return manage();
   $('#px')?.setAttribute('hidden', ''); gate();
 }
 // `ready` must depend ONLY on the access check (pages and the feed wait on it, so it must never wait on a page)
 const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],#cx,#delete-email-data,#mfa-start'); if (!t) return;
+  const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;
   if (t.dataset.payCancel !== undefined) { QUOTE = null; NOTICE = ''; pricing(); }
   else if (t.dataset.pay) checkout(t.dataset.pay);
   else if (t.dataset.plan) startPay();
   else if (t.id === 'delete-email-data') deleteEmailData();
   else if (t.id === 'mfa-start') startMfaEnrollment();
+  else if (t.dataset.so !== undefined) window.BSAuth.out();
+  else if (t.dataset.mt) { MTAB = t.dataset.mt; manage(); }
+  else if (t.dataset.um) { window.BSAuth.forget(t.dataset.um, t.dataset.id); manage(); }
+  else if (t.dataset.personalize !== undefined) { location.hash = '#/'; setTimeout(() => $('#tune')?.scrollIntoView({ behavior: 'smooth' }), 120); }
+  else if (t.dataset.recheck !== undefined) activating();
   else cancel();
 });
 document.addEventListener('bs:auth', onAuth);

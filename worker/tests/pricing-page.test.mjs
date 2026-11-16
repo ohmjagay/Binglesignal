@@ -8,16 +8,17 @@ const premium = await readFile(new URL('../../public/premium.js', import.meta.ur
 const config = await readFile(new URL('../../public/config.js', import.meta.url), 'utf8');
 const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
 
-async function boot({ country = 'IN', rails = {}, quote, signedIn = true, access = { status: 'trialing', days_left: 5, has_access: true, plan: 'pro' }, plan = {} } = {}) {
+async function boot({ country = 'IN', rails = {}, quote, signedIn = true, access = { status: 'trialing', days_left: 5, has_access: true, plan: 'pro' }, plan = {}, auth = {}, bs = {}, hash = '#/pricing', checkoutStatus = 200 } = {}) {
   const elements = new Map(), listeners = {}, fetches = [], razorpay = [];
   const el = (selector) => {
-    if (!elements.has(selector)) elements.set(selector, { innerHTML: '', hidden: false, textContent: '', value: '', setAttribute() {}, dataset: {} });
+    if (!elements.has(selector)) elements.set(selector, { innerHTML: '', hidden: false, textContent: '', value: '', setAttribute() {}, scrollIntoView() {}, dataset: {} });
     return elements.get(selector);
   };
   const window = { scrollTo() {}, dispatchEvent() {}, Razorpay: class { constructor(options) { razorpay.push(options); } open() { razorpay.opened = true; } } };
   runInNewContext(config, { window });
   Object.assign(window.BS.plan, plan);   // a test can pretend the owner edited config.js
-  window.BSAuth = { has: () => signedIn, token: async () => 'jwt', user: () => ({ email: 'ria@example.com' }) };
+  Object.assign(window.BS, bs);
+  window.BSAuth = { has: () => signedIn, token: async () => 'jwt', user: () => ({ email: 'ria@example.com' }), ...auth };
   const document = {
     querySelector: (selector) => (selector.startsWith('script[') || selector === '#home .brand' ? null : el(selector)),
     addEventListener: (type, handler) => { listeners[type] = handler; },
@@ -28,19 +29,21 @@ async function boot({ country = 'IN', rails = {}, quote, signedIn = true, access
     url = String(url);
     fetches.push({ url, body: init.body ? JSON.parse(init.body) : undefined });
     if (url.endsWith('/api/health')) return Response.json({ ok: true, country, rails });
-    if (url.includes('/rpc/my_access')) return Response.json(access);
+    if (url.includes('/rpc/my_access')) return Response.json(typeof access === 'function' ? access() : access);
     if (url.endsWith('/api/quote')) return Response.json(quote === undefined ? { usd: 5, country, inr: { usd: 5, rate: 88.4, base_inr: 442, gst_percent: 18, gst_inr: 80, rounding_inr: 3, total_inr: 525, quantity: 105 } } : quote);
+    if (url.endsWith('/api/checkout') && checkoutStatus !== 200) return Response.json({ error: 'invalid session' }, { status: checkoutStatus });
     if (url.endsWith('/api/checkout')) return Response.json({ provider: 'razorpay', key_id: 'rzp_test', subscription_id: 'sub_1', short_url: 'https://rzp.io/i/1' });
     return new Response('{}');
   };
+  const loc = { hash, href: '' };
   runInNewContext(premium, {
-    window, document, fetch: fakeFetch, location: { hash: '#/pricing', href: '' }, setTimeout, setInterval: () => 0,
+    window, document, fetch: fakeFetch, location: loc, setTimeout, setInterval: () => 0,
     addEventListener: (type, handler) => { listeners[`window:${type}`] = handler; },
   });
   await settle();
   const click = async (dataset) => { listeners.click({ target: { closest: () => ({ dataset }) } }); await settle(); };
   return {
-    get page() { return el('#px').innerHTML; }, get banner() { return el('#bn').innerHTML; }, fetches, razorpay,
+    get page() { return el('#px').innerHTML; }, get banner() { return el('#bn').innerHTML; }, fetches, razorpay, loc, click,
     subscribe: () => click({ plan: 'lite' }),
     pay: (currency) => click({ pay: currency }),
     back: () => click({ payCancel: '' }),
@@ -159,4 +162,93 @@ test('An empty small print, dollar note or question list hides that text instead
   await app.subscribe();
   assert.match(app.page, /data-pay="USD">Pay \$5\.00 a month in US dollars/);
   assert.doesNotMatch(app.page, /<small class="mu"><\/small>/);
+});
+
+// ===== Sign out, Manage account, measured time saved, and what happens after paying =====
+const until = async (condition) => { for (let i = 0; i < 100 && !condition(); i++) await settle(); };
+const ACTIVE = { status: 'active', has_access: true, current_period_end: '2026-12-15T00:00:00Z' };
+
+test('Every signed-in page has a Sign out button that works, and signed-out visitors do not see one', async () => {
+  let signedOut = 0;
+  const app = await boot({ rails: { razorpay_inr: true }, auth: { out: () => { signedOut++; } } });
+  assert.match(app.page, /<button class="link" data-so>Sign out<\/button>/);
+  await app.click({ so: '' });
+  assert.equal(signedOut, 1);
+  assert.doesNotMatch((await boot({ signedIn: false })).page, /Sign out/);
+});
+
+test('The account page shows the measured time saved with its formula, a Manage account card with Sign out, and no authenticator card', async () => {
+  const app = await boot({ hash: '#/account', access: ACTIVE, auth: { stats: () => ({ stories: 40, seconds: 1200 }) } });
+  assert.match(app.page, /You have saved about <b>1 h 40 min<\/b>/);
+  assert.match(app.page, /You read <b>40<\/b> story summaries in about 20 min; the originals would have taken about 2 h 0 min \(40 × 3 min\)/);
+  assert.match(app.page, /the stories you read × 3 minutes/);
+  assert.match(app.page, /href="#\/manage">Manage account<\/a>/);
+  assert.match(app.page, /data-so>Sign out/);
+  assert.doesNotMatch(app.page, /Account security|Set up authenticator/);
+  const fresh = await boot({ hash: '#/account', access: ACTIVE, auth: { stats: () => ({ stories: 0, seconds: 0 }) } });
+  assert.match(fresh.page, /Nothing measured yet/);
+  const tuned = await boot({ hash: '#/account', access: ACTIVE, bs: { articleMinutes: 5 }, auth: { stats: () => ({ stories: 10, seconds: 600 }) } });
+  assert.match(tuned.page, /about <b>40 min<\/b>/, 'articleMinutes in config.js changes the formula: 10 × 5 − 10');
+});
+
+test('Manage account lists liked, saved and not-interested stories, takes each one back, and shows the plan and security', async () => {
+  const forgotten = [];
+  const lists = { liked: [{ id: 'a1', t: 'Kenya <b>patient</b> leaves hospital', u: 'https://dw.example/a', s: 'DW' }], saved: [], hidden: [{ id: 'h1', t: '', u: '', s: '' }] };
+  const app = await boot({ hash: '#/manage', access: ACTIVE, auth: { lists: async () => lists, forget: (kind, id) => forgotten.push([kind, id]) } });
+  assert.match(app.page, /Liked 1/);
+  assert.match(app.page, /Saved 0/);
+  assert.match(app.page, /Not interested 1/);
+  assert.match(app.page, /Kenya &lt;b&gt;patient&lt;\/b&gt; leaves hospital/, 'story text is shown as text, never as markup');
+  assert.match(app.page, /href="https:\/\/dw\.example\/a"/);
+  await app.click({ um: 'liked', id: 'a1' });
+  assert.deepEqual(forgotten, [['liked', 'a1']]);
+  await app.click({ mt: 'saved' });
+  assert.match(app.page, /Stories you save will be listed here/);
+  await app.click({ mt: 'hidden' });
+  assert.match(app.page, /A story that has left your feed/);
+  assert.match(app.page, /data-um="hidden" data-id="h1">Show again/);
+  await app.click({ mt: 'plan' });
+  assert.match(app.page, /<b>Active<\/b>/);
+  assert.match(app.page, /Renews on/);
+  assert.match(app.page, /id="cx">Cancel subscription/);
+  await app.click({ mt: 'security' });
+  assert.match(app.page, /Set up authenticator/);
+  assert.equal((await boot({ hash: '#/manage', signedIn: false })).loc.hash, '#/me/read', 'signed-out visitors are sent to sign in');
+});
+
+test('After paying: the page waits for the plan to switch on, then welcomes the customer with two next steps', async () => {
+  let asked = 0;
+  const app = await boot({ rails: { razorpay_inr: true, razorpay_usd: true }, bs: { pollMs: 1 }, access: () => (++asked < 4 ? { status: 'expired', has_access: false } : ACTIVE) });
+  await app.subscribe(); await app.pay('USD');
+  app.razorpay[0].handler({ razorpay_payment_id: 'pay_123' });
+  assert.match(app.page, /Payment received/);
+  await until(() => /Welcome to BingleSignal/.test(app.page));
+  assert.match(app.page, /You are in\. Welcome to BingleSignal\./);
+  assert.match(app.page, /href="#\/me\/read">Start my briefing/);
+  assert.match(app.page, /data-personalize>Personalize my priorities/);
+  await app.click({ personalize: '' });
+  assert.equal(app.loc.hash, '#/', 'the home page holds the Tune my briefing panel');
+});
+
+test('If switching the plan on takes long, the customer is reassured, given a reference, and can check again', async () => {
+  let active = false;
+  const app = await boot({ rails: { razorpay_inr: true, razorpay_usd: true }, bs: { pollMs: 1 }, access: () => (active ? ACTIVE : { status: 'expired', has_access: false }) });
+  await app.subscribe(); await app.pay('USD');
+  app.razorpay[0].handler({ razorpay_payment_id: 'pay_slow1' });
+  await until(() => /Reference/.test(app.page));
+  assert.match(app.page, /do not need to pay again/);
+  assert.match(app.page, /Reference: pay_slow1\./);
+  assert.match(app.page, /data-recheck>Check again/);
+  active = true;
+  await app.click({ recheck: '' });
+  await until(() => /Welcome to BingleSignal/.test(app.page));
+  assert.match(app.page, /Welcome to BingleSignal/);
+});
+
+test('If the saved sign-in is no longer valid, checkout signs the person out and asks them to sign in again', async () => {
+  let expired = 0;
+  const app = await boot({ rails: { razorpay_inr: true, razorpay_usd: true }, checkoutStatus: 401, auth: { expired: () => { expired++; } } });
+  await app.subscribe(); await app.pay('USD');
+  assert.equal(expired, 1);
+  assert.equal(app.razorpay.length, 0, 'no payment window is opened for an invalid session');
 });

@@ -8,6 +8,7 @@ import { betaTestReport, handleEmailRequest, isValidBetaSchedule } from '../src/
 
 const env = {
   SUPABASE_URL: 'https://proj.supabase.co', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service',
+  INR_UNIT_RUPEES: '5',   // the tests in this file were written for the older five-rupee mode; the exact-rupee mode has its own tests
   RAZORPAY_KEY_ID: 'rzp_test_1', RAZORPAY_KEY_SECRET: 'secret', RAZORPAY_WEBHOOK_SECRET: 'hooksecret',
   RAZORPAY_PLAN_PRO_MONTHLY: 'plan_pro_m', RAZORPAY_PLAN_LITE_MONTHLY: 'plan_lite_m',
   RAZORPAY_PLAN_PRO_YEARLY: 'plan_pro_y', RAZORPAY_PLAN_LITE_YEARLY: 'plan_lite_y',
