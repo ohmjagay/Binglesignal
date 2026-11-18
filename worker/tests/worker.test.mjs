@@ -205,7 +205,7 @@ test('Browser authentication requires a Turnstile token and the site sends no in
   assert.match(headers, /Content-Security-Policy-Report-Only:.*frame-ancestors 'none'/);
 });
 
-test('Checkout (India): Razorpay subscription is created and the unused trial is preserved via start_at', async () => {
+test('Checkout (India): subscribing during the free trial keeps the unused trial days: the first charge waits until the trial ends (start_at)', async () => {
   const trialEnd = Date.now() + 3 * 86400e3;
   const calls = fakeNetwork({
     '/auth/v1/user': () => Response.json(USER),
@@ -223,7 +223,7 @@ test('Checkout (India): Razorpay subscription is created and the unused trial is
   assert.equal(rz.body.quantity, 105, '$5 x 88.4 = 442 rupees + 18% GST (80) = 522, rounded up to 525 = 105 units of the 5-rupee plan');
   assert.equal(rz.body.notes.total_inr, '525');
   assert.equal(rz.body.notes.user_id, USER.id);
-  assert.equal(rz.body.start_at, Math.floor(trialEnd / 1000));
+  assert.equal(rz.body.start_at, Math.floor(trialEnd / 1000), 'trial ends 25 Nov, subscribed 22 Nov: first payment 25 Nov, the 3 unused days are added to the plan');
   assert.ok(rz.body.expire_by > Math.floor(Date.now() / 1000));
   assert.ok(calls.some((call) => call.url.includes('/rpc/reserve_payment_checkout')));
   assert.equal(rz.init.headers.authorization, 'Basic ' + btoa('rzp_test_1:secret'));
@@ -484,4 +484,42 @@ test('Sign-in and sign-up send the Turnstile token where Supabase looks for it (
   const app = await readFile(new URL('../../public/app.js', import.meta.url), 'utf8');
   assert.equal(app.match(/gotrue_meta_security:\{captcha_token:captchaToken\}/g)?.length, 2, 'one for sign-up, one for sign-in');
   assert.doesNotMatch(app, /[,{]captcha_token:captchaToken\}\}\)/, 'a bare top-level captcha_token is ignored by Supabase ("no captcha_token found")');
+});
+
+// ===== Free trial: 7 days for every new sign-up; subscribing during it keeps the unused days =====
+test('Migration 014 brings the 7-day trial back for new sign-ups, tells the app who has already subscribed, and touches no payment code', async () => {
+  const sql = await readFile(new URL('../../supabase/014_free_trial_returns.sql', import.meta.url), 'utf8');
+  assert.match(sql, /alter column status set default 'trialing'/i);
+  assert.match(sql, /alter column trial_ends_at set default \(now\(\) \+ interval '7 days'\)/i);
+  assert.match(sql, /'trial_subscribed'/, 'the app is told when someone has already subscribed during the trial');
+  assert.match(sql, /grant execute on function public\.my_access\(\) to authenticated/i);
+  assert.doesNotMatch(sql, /apply_payment_webhook/, 'payment handling is not redefined');
+  assert.doesNotMatch(sql, /update public\.subscriptions s set\s+status = 'trialing'/i, 'nobody already stored is turned back into a trial');
+});
+
+test('Checkout: a trial that has already run out is billed at once (no start_at)', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/finish_payment_checkout': () => Response.json(true),
+    'select=status,trial_ends_at': () => Response.json([{ status: 'trialing', trial_ends_at: new Date(Date.now() - 3600e3).toISOString() }]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_late', short_url: 'https://rzp.io/i/late' }),
+  });
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
+  assert.equal(res.status, 200);
+  assert.equal('start_at' in subscriptionCall(calls).body, false);
+});
+
+test('Checkout: someone who already subscribed during the trial cannot start a second subscription (no double billing)', async () => {
+  const calls = fakeNetwork({
+    '/auth/v1/user': () => Response.json(USER),
+    '/rpc/reserve_payment_checkout': () => Response.json({ state: 'reserved' }),
+    '/rpc/release_payment_checkout': () => Response.json(true),
+    'select=status,trial_ends_at': () => Response.json([{ status: 'trialing', trial_ends_at: new Date(Date.now() + 2 * 86400e3).toISOString(), provider_subscription_id: 'sub_first' }]),
+    'api.razorpay.com': () => Response.json({ id: 'sub_second', short_url: 'https://rzp.io/i/second' }),
+  });
+  const res = await worker.fetch(post('/api/checkout', { interval: 'month', currency: 'USD' }, { authorization: 'Bearer jwt', 'cf-ipcountry': 'DE' }), env);
+  assert.equal(res.status, 409);
+  assert.equal(subscriptionCall(calls), undefined, 'Razorpay is never asked for a second subscription');
+  assert.ok(calls.some((call) => call.url.includes('/rpc/release_payment_checkout')), 'the reservation is given back');
 });

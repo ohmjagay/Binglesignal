@@ -130,15 +130,17 @@ test('WATCH shows up to 200 videos, and the like, save and hide buttons keep a s
 
 // ---------- the one-time helper that edits config.js and wrangler.toml ----------
 test('The one-time config helper makes each edit once, leaves finished edits alone, keeps Windows line endings, and says when a line was changed by hand', () => {
-  const oldConfig = "{ plan:{\n    note:'Every account starts with a 7-day free trial. No card needed. Cancel any time.',\n    faq:[\n      ['Is there a free trial?','Yes. Every account starts with a 7-day free trial, and no card is needed to start it.'],\n      ['Other','Other.']\n    ] },\n  watchCap:30,  // videos in WATCH\n}";
+  const oldConfig = "{ plan:{\n    note:'Start reading straight away. Cancel any time. Full refund within 7 days of your first payment.',\n    faq:[\n      ['When am I charged?','The moment you subscribe, then every month until you cancel. If you are not satisfied, email us within 7 days of your first payment for a full refund.'],\n      ['Other','Other.']\n    ] },\n  watchCap:30,  // videos in WATCH\n}";
   let text = oldConfig;
   for (const edit of EDITS.filter((e) => e.file === 'public/config.js')) {
     const result = applyEdit(text, edit);
     assert.equal(result.state, 'changed', edit.what);
     text = result.text;
   }
-  assert.match(text, /note:'Start reading straight away\./);
-  assert.match(text, /\['When am I charged\?'/);
+  assert.match(text, /note:'Free for 7 days, no card needed\./);
+  assert.match(text, /\['Is there a free trial\?'/);
+  assert.match(text, /\['When am I charged\?','Nothing is charged during your free trial\./);
+  assert.match(text, /days you have left are added to your plan/);
   assert.match(text, /\['Other','Other\.'\]/, 'neighbouring lines are untouched');
   assert.match(text, /watchCap:200,  \/\/ videos in WATCH/);
   for (const edit of EDITS.filter((e) => e.file === 'public/config.js')) assert.equal(applyEdit(text, edit).state, 'already');

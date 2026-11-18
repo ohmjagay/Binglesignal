@@ -297,10 +297,21 @@ async function handleCheckout(req, env) {
   await recordBillingEvent(env, user.id, 'checkout_started', { plan, interval, currency });
   let externalCheckoutCreated = false;
   try {
-    const subscriptionRows = await sb(env, `/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(user.id)}&select=status,trial_ends_at`);
+    const subscriptionRows = await sb(env, `/rest/v1/subscriptions?user_id=eq.${encodeURIComponent(user.id)}&select=status,trial_ends_at,provider_subscription_id`);
     if (!subscriptionRows.ok) throw new Error(`Subscription lookup failed: ${subscriptionRows.status}`);
     const subscriptions = await subscriptionRows.json();
+    if (subscriptions?.[0]?.status === 'trialing' && subscriptions[0].provider_subscription_id) {
+      // They already subscribed during the trial and the first charge is still to come: a second checkout would bill them twice.
+      const released = await sb(env, '/rest/v1/rpc/release_payment_checkout', {
+        method: 'POST', body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId }),
+      });
+      if (!released.ok) throw new Error(`Checkout reservation cleanup failed: ${released.status}`);
+      return json({ error: 'You have already subscribed. Your first payment is taken when your free trial ends.' }, 409);
+    }
     const trialEnd = subscriptions?.[0]?.status === 'trialing' ? Date.parse(subscriptions[0].trial_ends_at) : 0;
+    // Every new sign-up gets a 7-day free trial (supabase/014_free_trial_returns.sql). Subscribing during it does NOT use the days up:
+    // the first charge waits until the trial would have ended, so the days left are added to the plan (subscribe on day 3 of 7 and the
+    // 4 unused days come on top of the paid month). A trial that has run out, or an account that never had one, is billed at once.
     const startAt = trialEnd - Date.now() > 15 * 60 * 1000 ? Math.floor(trialEnd / 1000) : undefined;
     const r = await fetch('https://api.razorpay.com/v1/subscriptions', { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },

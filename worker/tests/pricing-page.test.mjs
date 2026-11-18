@@ -118,10 +118,10 @@ test('Outside India there is nothing to choose: $5 in dollars, once the USD plan
   assert.equal(ready.razorpay.length, 1);
 });
 
-test('Signed-out visitors are invited to get started (there is no free trial); subscribers see "Your current plan"', async () => {
+test('Signed-out visitors are invited to start the 7-day free trial; subscribers see "Your current plan"', async () => {
   const visitor = await boot({ signedIn: false, rails: { razorpay_inr: true } });
-  assert.match(visitor.page, /Get started/);
-  assert.doesNotMatch(visitor.page, /7-day|free trial/i);
+  assert.match(visitor.page, /Start 7-day free trial/);
+  assert.match(visitor.page, /days you have left are added to your plan/, 'the carry-over of unused trial days is advertised');
   assert.doesNotMatch(visitor.page, /data-plan=/);
   const subscriber = await boot({ rails: { razorpay_inr: true }, access: { status: 'active', plan: 'lite', has_access: true } });
   assert.match(subscriber.page, /Your current plan/);
@@ -251,4 +251,24 @@ test('If the saved sign-in is no longer valid, checkout signs the person out and
   await app.subscribe(); await app.pay('USD');
   assert.equal(expired, 1);
   assert.equal(app.razorpay.length, 0, 'no payment window is opened for an invalid session');
+});
+
+test('Free trial: a trialing user who has not subscribed is told nothing is charged today and that the first payment is on the trial end date', async () => {
+  const trialEnd = '2026-11-20T12:00:00.000Z';
+  const app = await boot({ country: 'DE', rails: { razorpay_usd: true }, access: { status: 'trialing', days_left: 3, has_access: true, plan: 'pro', trial_ends_at: trialEnd } });
+  assert.match(app.page, /data-plan="lite"/, 'they can still subscribe');
+  assert.match(app.page, /Nothing is charged today/);
+  assert.match(app.page, /Your 3 days of free trial are added to your plan/);
+  const expected = new Date(trialEnd).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  assert.ok(app.page.includes(`first payment is on <b>${expected}</b>`), 'the first payment is on the day the trial ends, not later');
+  assert.match(app.banner, /days you have left are added to your plan/);
+});
+
+test('Free trial: someone who already subscribed during the trial cannot subscribe again and sees when the first payment is taken', async () => {
+  const app = await boot({ country: 'DE', rails: { razorpay_usd: true }, access: { status: 'trialing', days_left: 5, has_access: true, plan: 'pro', trial_ends_at: '2026-11-23T12:00:00.000Z', trial_subscribed: true } });
+  assert.doesNotMatch(app.page, /data-plan=/);
+  assert.match(app.page, /<button class="btn wide" disabled>Subscribed<\/button>/);
+  assert.match(app.page, /first payment of \$5 is taken then/);
+  assert.match(app.banner, /you are subscribed, first payment on/);
+  assert.doesNotMatch(app.banner, /Subscribe any time/);
 });

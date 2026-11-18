@@ -4,7 +4,7 @@ const BS = window.BS || (window.BS = {}), $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const SB = BS.supabaseUrl, KEY = BS.supabaseKey, ENFORCE = BS.paywall !== false;
 // Everything the pricing page says (name, bullets, heading, price) lives in public/config.js, so you edit it there.
-const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Start reading straight away. Cancel any time. Full refund within 7 days of your first payment.',
+const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Free for 7 days, no card needed. Subscribe during your trial and the days you have left are added to your plan. Cancel any time.',
   name: 'BingleSignal Briefing', label: 'Daily briefing', tagline: "The signal from today's news, summarised for you, with videos picked for how you watch.", features: [], soon: [],
   fine: 'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
   usdNote: 'International card. Your bank may add its own exchange rate and fees, and some Indian cards block dollar payments.',
@@ -13,6 +13,8 @@ const PLAN_NAME = PLAN.name;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
 const FEATS = [...(PLAN.features || []).map((t) => [t, 1]), ...(PLAN.soon || []).map((t) => [t, 0])];
 const USD = Number(BS.price?.usd ?? 5);   // one price worldwide
+// Free trial: 7 days for every new account. Subscribing during it keeps the days left: the worker takes the first payment on the day the
+// trial ends, so those days are added to the plan. This file only words it; what is charged is decided in worker/src/index.js.
 const fill = (s) => esc(s).replace(/\{usd\}/g, () => '$' + USD);   // text typed in config.js: {usd} becomes the price, e.g. $5
 const money = (n) => Number(n).toLocaleString('en-IN');
 let ACC = null, ENVI = null, INT = 'month', QUOTE = null, NOTICE = '', busy = false, pendingMfaEnrollment = null;
@@ -20,6 +22,11 @@ const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
 const authed = () => !!window.BSAuth?.has?.();
 const fd = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const dayWord = (n) => `${n} day${n === 1 ? '' : 's'}`;
+// The one sentence about the trial, used on the Account and Manage screens.
+const trialLine = (a) => a.trial_subscribed
+  ? `You have subscribed. Your free trial runs until <b>${fd(a.trial_ends_at)}</b> (${dayWord(a.days_left)} left) and your first payment is taken then.`
+  : `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${dayWord(a.days_left)} left). Subscribe before then and the ${a.days_left === 1 ? 'day' : 'days'} you have left ${a.days_left === 1 ? 'is' : 'are'} added to your plan: your first payment is taken on <b>${fd(a.trial_ends_at)}</b>.`;
 const tzIN = () => /Kolkata|Calcutta/.test(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
 const loadScript = (src) => new Promise((ok, no) => {
   if (document.querySelector(`script[src="${src}"]`)) return ok();
@@ -57,7 +64,8 @@ const loadAccess = () => { if (!inflight) inflight = loadAccessNow().finally(() 
 function paintBanner() {
   const b = $('#bn'); if (!b) return;
   const a = ACC; let m = '';
-  if (a?.status === 'trialing') m = `<span><b>Free trial</b> · ${a.days_left} day${a.days_left === 1 ? '' : 's'} left · no card needed</span><a class="btn sm" href="#/pricing">Subscribe</a>`;
+  if (a?.status === 'trialing' && a.trial_subscribed) m = `<span><b>Free trial</b> · ${dayWord(a.days_left)} left · you are subscribed, first payment on <b>${fd(a.trial_ends_at)}</b></span><a class="btn sm" href="#/account">Manage plan</a>`;
+  else if (a?.status === 'trialing') m = `<span><b>Free trial</b> · ${dayWord(a.days_left)} left · no card needed. Subscribe any time and the days you have left are added to your plan.</span><a class="btn sm" href="#/pricing">Subscribe</a>`;
   else if (a?.status === 'past_due') m = '<span><b>Payment problem.</b> Please update your payment method to keep your plan.</span><a class="btn sm" href="#/account">Manage plan</a>';
   else if (a?.status === 'canceled' && a.has_access) m = `<span>Your plan ends on <b>${fd(a.current_period_end)}</b>.</span><a class="btn sm" href="#/pricing">Renew</a>`;
   b.innerHTML = m; b.hidden = !m;
@@ -91,12 +99,16 @@ async function pricing() {
   const e = await env(), india = region(e) === 'IN', rails = e.rails || {};
   const ready = india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd;
   const active = ACC?.status === 'active';
+  const trialing = ACC?.status === 'trialing', trialSubscribed = trialing && !!ACC.trial_subscribed;
   let cta;
-  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Get started</a><small class="mu">Create your account, then subscribe for $${USD} a month.</small>`;
+  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Subscribe during the trial and the days you have left are added to your plan, then $${USD} a month.</small>`;
   else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
+  else if (trialSubscribed) cta = `<button class="btn wide" disabled>Subscribed</button><small class="mu">Your free trial runs until <b>${fd(ACC.trial_ends_at)}</b>. Your first payment of $${USD} is taken then.</small>`;
   else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Please check back shortly.</small>';
   else if (QUOTE && india) cta = payBox(e);
   else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · $${USD}/month</button>`;
+  // Still in the free trial: say what subscribing now does. Nothing is charged until the trial is over, so the days left are added to the plan.
+  if (trialing && !trialSubscribed && ready) cta += `<small class="mu"><b>Nothing is charged today.</b> Your ${dayWord(ACC.days_left)} of free trial are added to your plan${fd(ACC.trial_ends_at) ? `: your first payment is on <b>${fd(ACC.trial_ends_at)}</b>` : ''}.</small>`;
   const card = `<article class="card plan hot"><div class="eyebrow">${esc(PLAN.label)}</div><h2 class="serif">${esc(PLAN_NAME)}</h2><p class="mu">${esc(PLAN.tagline)}</p><div class="price"><span>$</span><b>${esc(USD)}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
   const faq = (PLAN.faq || []).filter((x) => Array.isArray(x) && x[0] && x[1]);
   const faqCard = faq.length ? `<div class="plans faq"><section class="card"><h2 class="serif">${esc(PLAN.faqHeading)}</h2>${faq.map(([q, a]) => `<h3 class="serif">${esc(q)}</h3><p class="mu">${fill(a)}</p>`).join('')}</section></div>` : '';
@@ -184,10 +196,10 @@ async function account() {
   const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'Not subscribed' };
   let body = '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
   if (a) {
-    const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`
+    const line = a.status === 'trialing' ? trialLine(a)
       : a.status === 'active' ? `Briefing plan.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
-    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '' : '<a class="btn" href="#/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
+    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' || a.trial_subscribed ? '' : '<a class="btn" href="#/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
   frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">${timeSavedHTML()}</p><p class="mu fine">How it is measured: the stories you read × ${ART_MIN} minutes (about how long an original article takes) minus the time you actually spent on their summaries.</p></section><section class="card"><h2 class="serif">Manage account</h2><p class="mu">See the stories you liked, saved or marked not interested, and your subscription plan.</p><p><a class="btn fill" href="#/manage">Manage account</a> <button class="btn" data-so>Sign out</button></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
 }
@@ -212,10 +224,10 @@ const safeUrl = (u) => (/^https?:\/\//i.test(u || '') ? esc(u) : '#');
 function planHTML(a) {
   if (!a) return '<p class="mu">Plan details are unavailable right now. Please try again shortly.</p>';
   const label = { trialing: 'Free trial', active: 'Active', past_due: 'Payment problem', canceled: 'Cancelled', expired: 'Not subscribed', none: 'Not subscribed' };
-  const line = a.status === 'trialing' ? `Trial ends on <b>${fd(a.trial_ends_at)}</b> (${a.days_left} day${a.days_left === 1 ? '' : 's'} left).`
+  const line = a.status === 'trialing' ? trialLine(a)
     : a.status === 'active' ? `Briefing plan, $${USD} a month.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
     : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : 'You are not subscribed yet.';
-  return `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : '<a class="btn fill" href="#/pricing">Subscribe</a>'}</p><p id="pxmsg" class="mu" role="status"></p>`;
+  return `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : a.trial_subscribed ? '' : '<a class="btn fill" href="#/pricing">Subscribe</a>'}</p><p id="pxmsg" class="mu" role="status"></p>`;
 }
 
 async function manage() {
