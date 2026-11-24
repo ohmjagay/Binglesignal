@@ -7,6 +7,9 @@ import {summarizeStory} from './story-summary.mjs';
 import {fetchArticleText} from './article-text.mjs';
 import {DeepSeekError} from '../worker/src/deepseek.js';
 import {supabaseKeyHeaders} from '../worker/src/supabase.js';
+import {cleanHeadline} from '../public/textfmt.js';
+// News-quality rules (trusted publishers, no shopping/fluff, the real country of a story, direct links): worker/src/story-quality.js
+import {isBlockedPublisher,isShoppingNoise,isFluff,OPT_IN_CATEGORIES,inferRegion,mentionsIndia,publisherTier,publisherTrust,isGoogleNewsUrl,decodeGoogleNewsUrl,resolveGoogleNewsUrl,mergeStories} from '../worker/src/story-quality.js';
 const [G,I,U,E]=['GL','IN','US','EU'],UA='Mozilla/5.0 (compatible; BingleSignalBot/5.0; +https://binglesignal.com)',HL={n:14,r:20,h:16,b:48,y:96};
 // Publisher feeds: ['feed url','Source',region,'default topics',trust 0-1]. Add or remove lines freely.
 const FEEDS=[
@@ -138,10 +141,8 @@ for(const [id,n,top,r,tr] of YT)add([`https://www.youtube.com/feeds/videos.xml?c
 
 const sourceTier=source=>{
  const name=String(source||'').toLowerCase();
- if(/sec|sebi|federal register|european commission|rbi|pib|mca|cbic|dgft|trai|cci|irdai|fssai|nse|bse/.test(name))return 1;
- if(/bbc|new york times|financial times|mint|economic times|business standard|the hindu|reuters|cnbc|npr/.test(name))return 2;
- if(/techcrunch|inc42|entrackr|yourstory|venturebeat|technology review|ars technica|the verge|variety/.test(name))return 3;
- return 4;
+ if(/\b(sec|sebi|rbi|pib|mca|cbic|dgft|trai|cci|irdai|fssai|nse|bse)\b|federal register|european commission/.test(name))return 1;
+ return publisherTier(source); // 1 to 4, from the publisher list in worker/src/story-quality.js
 };
 const canonicalUrl=value=>{
  const url=new URL(value);url.hash='';
@@ -180,9 +181,12 @@ async function pull([url,s,r,top,tr=.75,p='n',pw=.85]){
    if(!t||!/^https?:\/\//.test(u)||isNaN(d)||Date.now()-d>(p==='y'?14*864e5:96*36e5))continue;
    let src=s;const so=b.match(/<source[^>]*>([\s\S]*?)<\/source>/i);
    if(so){src=txt(so[1])||s;t=t.replace(new RegExp('\\s+-\\s+'+rxEsc(src)+'$'),'')}
+   if(isBlockedPublisher(src))continue;
+   if(p==='n')t=cleanHeadline(t,src);
    let x=txt(tag(b,'description')||tag(b,'summary')||tag(b,'content:encoded')||tag(b,'media:description')||tag(b,'content')).replace(/\s*The post .{0,200}appeared first on .*$/i,'').replace(/submitted by.*$/i,'');
    const lim=p==='y'?600:240;x=x.length<40||x.startsWith(t)?'':x.length>lim?x.slice(0,lim-1).replace(/\s+\S*$/,'')+'…':x;
-   const it={id:uid(u),t,u,s:src,d:new Date(Math.min(d,Date.now())).toISOString(),r,top,x,i:img(b),p,pw,tr};
+   if(p!=='y'&&isShoppingNoise(t,x))continue;
+   const it={id:uid(u),t,u,s:src,d:new Date(Math.min(d,Date.now())).toISOString(),r,top,x,i:img(b),p,pw,tr,...(s==='Google News'?{gn:1}:{})};
    if(p==='y'){it.v=1;it.vid=txt(tag(b,'yt:videoId'));it.e=+((b.match(/<media:statistics views="(\d+)"/)||[])[1]||0);if(!it.vid)continue}
    if(p==='r')it.e=Math.max(10,(26-idx)*12);
    idx++;out.push(it)}
@@ -237,7 +241,19 @@ console.log('sources to fetch:',FEEDS.length);
 const all=(await pmap(FEEDS,pull)).flat().concat(await pullHN(),await pullYT());
 const byUrl=new Map();for(const a of all){a.u=canonicalUrl(a.u);const prior=byUrl.get(a.u);if(prior)prior.top+=' '+a.top;else byUrl.set(a.u,a)}
 const items=[...byUrl.values()];
-for(const a of items){a.k=classify(a.t,a.x,a.top,a.pw);a.g=a.r&&a.r!==G?[a.r]:[];a.m=mentions(a.t+' '+a.x,a.g[0]);a.tier=sourceTier(a.s);if(a.r===I&&!a.k.includes('india')&&a.k.length<5)a.k.push('india')}
+for(const a of items){
+ a.k=classify(a.t,a.x,a.top,a.pw);
+ const edition=a.r&&a.r!==G?[a.r]:[];
+ // The country is worked out from the story itself: India only when it is about India, not because it came through the Indian edition of Google News.
+ a.g=a.v?edition:inferRegion({t:a.t,x:a.x,u:a.u,g:edition,gn:!!a.gn,local:a.k.includes('local')});
+ a.m=mentions(a.t+' '+a.x,a.g[0]);a.tier=sourceTier(a.s);
+ if(a.gn&&!a.v)a.tr=publisherTrust(a.s); // a story found through Google News is trusted as much as its real publisher, not as "Google"
+ if(a.g[0]===I&&!a.k.includes('india')&&a.k.length<5)a.k.push('india');
+ if(a.k.includes('india')&&a.g[0]!==I&&!mentionsIndia(a.t+' '+(a.x||'')))a.k=a.k.filter(id=>id!=='india');
+ // Zoo animals, horoscopes and similar: kept only for the lifestyle/entertainment interests a reader chose, never in business desks or Trending.
+ if(!a.v&&isFluff(a.t,a.x)){a.k=a.k.filter(id=>OPT_IN_CATEGORIES.has(id));a.fluff=1}
+}
+for(let i=items.length;i--;)if(items[i].fluff&&!items[i].k.length)items.splice(i,1);
 const reads=items.filter(a=>!a.v),vids=items.filter(a=>a.v);
 for(const a of reads){a.T=toks(a.t);a.q0=a.tr*.5**((now-new Date(a.d))/36e5/HL[a.p])}
 reads.sort((a,b)=>b.q0-a.q0);
@@ -245,7 +261,7 @@ const cl=[];for(const a of reads){const c=cl.find(c=>same(a.T,c.rep.T));c?c.m.pu
 for(const c of cl){const n=new Set(c.m.map(x=>x.s)).size;for(const x of c.m){x.c=c.rep.id;x.n=n}}
 for(const a of vids){a.c=a.id;a.n=1}
 for(const p of ['r','h','y']){const group=items.filter(a=>a.p===p&&a.e!=null);group.forEach(a=>a.vel=a.e/((now-new Date(a.d))/36e5+2)**1.3);group.sort((a,b)=>a.vel-b.vel);group.forEach((a,i)=>a.ep=Math.round(100*i/Math.max(1,group.length-1)))}
-for(const a of items){if(a.ep==null)a.ep=Math.min(95,Math.round(30+20*Math.log2(a.n)));a.q=+(a.tr*.5**((now-new Date(a.d))/36e5/HL[a.p])*(1+.55*Math.log2(a.n))*(.7+.6*a.ep/100)).toFixed(4);if((a.n>=3||a.ep>=92)&&!a.k.includes('trending')&&a.k.length<5)a.k.push('trending')}
+for(const a of items){if(a.ep==null)a.ep=Math.min(95,Math.round(30+20*Math.log2(a.n)));a.q=+(a.tr*.5**((now-new Date(a.d))/36e5/HL[a.p])*(1+.55*Math.log2(a.n))*(.7+.6*a.ep/100)).toFixed(4);if((a.n>=3||a.ep>=92)&&!a.fluff&&!a.k.includes('trending')&&a.k.length<5)a.k.push('trending')}
 const keep=(arr,per,cap)=>{const map=new Map();for(const category of CATS)arr.filter(a=>a.k.includes(category[0])).sort((a,b)=>b.q-a.q).slice(0,per).forEach(a=>map.set(a.id,a));[...arr].sort((a,b)=>b.q-a.q).slice(0,cap>>2).forEach(a=>map.set(a.id,a));return[...map.values()].sort((a,b)=>b.q-a.q).slice(0,cap)};
 if(!reads.length){console.error('No stories fetched');process.exit(1)}
 const selected=keep(reads,70,2600),selectedVideos=keep(vids,30,600);
@@ -261,19 +277,36 @@ for(const group of cl){
  for(const old of oldClusters){const score=cosine(group.embedding,old.embedding);if(score>=similarity){best=old;similarity=score}}
  if(best)for(const item of group.m)item.c=best.story_id;
 }
+// ---- direct links: a Google News link is swapped for the publisher's own link. Each one is looked up once and remembered (as `gu`), so it is never looked up again.
+{
+ const known=new Map();for(const old of oldClusters)for(const story of old.stories||[])if(story.gu)known.set(story.gu,story.u);
+ const pending=[];
+ for(const item of [...selected].sort((a,b)=>b.q-a.q)){
+  if(!isGoogleNewsUrl(item.u))continue;
+  const direct=known.get(item.u)||decodeGoogleNewsUrl(item.u); // remembered from an earlier run, or readable from the link itself (no request needed)
+  if(direct){item.gu=item.u;item.u=canonicalUrl(direct);continue}
+  pending.push(item);
+ }
+ const LOOKUPS=+process.env.MAX_LINK_LOOKUPS||150,begun=Date.now(),batch=pending.slice(0,LOOKUPS);let found=0,failed=0;
+ await pmap(batch,async item=>{
+  if(Date.now()-begun>4*60e3||(failed>=12&&!found))return; // out of time, or Google is refusing us: keep the Google links and try again next run
+  const direct=await resolveGoogleNewsUrl(item.u);
+  if(direct){item.gu=item.u;item.u=canonicalUrl(direct);found++}else failed++;
+ },4);
+ console.log('direct links: looked up',batch.length,'found',found,'| Google links still to resolve',pending.length-found);
+}
 const rowsById=new Map();
 const serializeStory=item=>({id:item.id,t:item.t,u:item.u,s:item.s,d:Math.floor(+new Date(item.d)/1000),p:item.p,
  ...(item.v?{v:1,vid:item.vid}:{}),k:item.k,...(item.g.length?{g:item.g}:{}),...(item.m.length?{m:item.m}:{}),
- ...(item.x?{x:item.x}:{}),c:item.c,n:item.n,q:item.q,ep:item.ep,...(item.e!=null?{e:Math.round(item.e)}:{}),
+ ...(item.x?{x:item.x}:{}),...(item.gu?{gu:item.gu}:{}),c:item.c,n:item.n,q:item.q,ep:item.ep,...(item.e!=null?{e:Math.round(item.e)}:{}),
  tr:item.tr,source_tier:item.tier});
 for(const item of [...selected,...selectedVideos]){
  const storyId=item.c,group=rowsById.get(storyId)||{story_id:storyId,items:[],embedding:item.embedding||null,source_tier:item.tier,source_count:0,published_at:item.d};
  group.items.push(serializeStory(item));group.source_tier=Math.min(group.source_tier,item.tier);if(new Date(item.d)>new Date(group.published_at))group.published_at=item.d;rowsById.set(storyId,group);
 }
 const clusterRows=[...rowsById.values()].map(group=>{
- const existing=oldClusters.find(row=>row.story_id===group.story_id),merged=new Map();
- for(const item of [...(existing?.stories||[]).map(({embedding,...story})=>story),...group.items])merged.set(item.u,item);
- const stories=[...merged.values()].sort((a,b)=>new Date(b.d)-new Date(a.d)).slice(0,12);
+ const existing=oldClusters.find(row=>row.story_id===group.story_id);
+ const stories=mergeStories((existing?.stories||[]).map(({embedding,...story})=>story),group.items); // never the same article twice; a direct link beats a Google link
  return{story_id:group.story_id,stories,embedding:group.embedding,source_tier:group.source_tier,
   source_count:new Set(stories.map(item=>item.s)).size,published_at:new Date(group.published_at).toISOString(),
   expires_at:new Date(Math.max(now,Date.parse(group.published_at))+7*864e5).toISOString(),updated_at:new Date().toISOString()};
@@ -326,7 +359,7 @@ for(let offset=0;offset<notesToWrite.length;offset+=100){
 await apiRequest(`/rest/v1/story_clusters?expires_at=lt.${encodeURIComponent(new Date(now).toISOString())}`,{method:'DELETE',headers:{prefer:'return=minimal'}});
 // Housekeeping: every subscriber gets a stored daily edition (about 7 KB). Keep 30 days, delete the rest, so the database does not grow forever.
 await apiRequest(`/rest/v1/editions?created_at=lt.${encodeURIComponent(new Date(now-30*864e5).toISOString())}`,{method:'DELETE',headers:{prefer:'return=minimal'}});
-const feed=keep(reads.filter(a=>a.p!=='r'),4,30).map(a=>({id:a.id,t:a.t,u:a.u,s:a.s,d:new Date(a.d).toISOString(),r:hreg(a.r),k:a.k,c:a.c,n:a.n,q:a.q}));
+const feed=keep(reads.filter(a=>a.p!=='r'),4,30).map(a=>({id:a.id,t:a.t,u:a.u,s:a.s,d:new Date(a.d).toISOString(),r:hreg(a.g?.[0]),k:a.k,c:a.c,n:a.n,q:a.q}));
 // The public teaser is now served live by the Worker at /api/teaser. The static file is only a fallback and is written on request:
 //   node scripts/ingest.mjs --write-teaser
 if(process.argv.includes('--write-teaser'))await writeFile('public/feed.json',JSON.stringify({v:5,gen:new Date(now).toISOString(),n:feed.length,items:feed}));

@@ -371,7 +371,8 @@ test('Teaser items are headline-only, best first, and skip videos and unsafe lin
     teaserCluster('badlink', 0.8, { u: 'javascript:alert(1)' }),
   ], 2);
   assert.deepEqual(items.map((item) => item.c), ['high', 'mid']);
-  assert.deepEqual(Object.keys(items[0]).sort(), ['c', 'd', 'id', 'k', 'n', 'q', 'r', 's', 't', 'u']);
+  assert.deepEqual(Object.keys(items[0]).sort(), ['c', 'd', 'id', 'k', 'lg', 'n', 'q', 'r', 's', 't', 'u']);   // lg = website of the source, for its small logo
+  assert.equal(items[0].lg, 'news.example');
   assert.equal(items[0].r, 'IN');
   assert.equal(items[0].d, new Date(1793000000 * 1000).toISOString());
 });

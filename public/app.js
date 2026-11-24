@@ -3,6 +3,8 @@ import {CATS,CAT,GROUPS,LBL,CC,ISO,EUROPE,cname} from './taxonomy.js';
 import {listMfaFactors} from './mfa.js';
 import {renderOnboarding} from './onboarding.js';
 import {tasteScores,updateTaste,capPerKey} from './taste.js';
+import {footerHTML,shareHTML,brandInner} from './chrome.js';
+import {plural,dropRepeats} from './textfmt.js';
 const BS=window.BS||{},$=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=u=>/^https?:\/\//i.test(u)?esc(u):'#',short=(s,n)=>s.length>n?s.slice(0,n-1).replace(/\s+\S*$/,'')+'…':s,
@@ -44,7 +46,7 @@ function drop(){S=null;store.del('bs_sess');paintHs()}
 async function token(forceRefresh=false){if(!S)return null;const expiry=Math.min(Number(S.exp)||Infinity,jwtExpiry(S.at)||Infinity);if(forceRefresh||!Number.isFinite(expiry)||Date.now()>=expiry-60000){try{if(!S.rt)throw new Error('Refresh token is missing');setSess(await api('/auth/v1/token?grant_type=refresh_token',{m:'POST',b:{refresh_token:S.rt}}))}catch{drop();return null}}return S.at}
 // A saved session whose user no longer exists (deleted, project reset) must not trap anyone: it is dropped and they are asked to sign in again.
 const deadSession=e=>!!e&&(e.status===401||e.status===403||/sub claim in JWT does not exist|invalid JWT|JWT (is )?expired|session.{0,12}not.{0,6}found|user.{0,12}not.{0,6}found/i.test(e.message||''));
-function expired(){if(/^#\/(me|account|manage|pricing|onboarding)/.test(location.hash))openAuth('Your session ended. Please sign in again.','in')}
+function expired(){if(/^#\/(me|account|manage|pricing|onboarding)/.test(location.hash)||location.pathname==='/pricing')openAuth('Your session ended. Please sign in again.','in')}
 async function loadUser(){const t=await token();if(!t)return;try{S.u=await api('/auth/v1/user',{t})}catch(e){if(deadSession(e)){drop();expired()}throw e}store.set('bs_sess',S);const n=S.u?.user_metadata?.full_name;if(!P.name&&n){P.name=n.split(' ')[0].slice(0,24);savePrefs()}}
 async function mfaFactors(accessToken=S?.at){
  return listMfaFactors(api,accessToken);
@@ -77,7 +79,7 @@ async function setupCaptcha(){
 const google=()=>{if(!authCaptcha){const er=$('#er');if(er)er.textContent='Complete the security check first.';return}
  location.href=SB+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(location.origin+'/')+'&captcha_token='+encodeURIComponent(authCaptcha)};
 function fromHash(){const h=new URLSearchParams(location.hash.slice(1));
- if(h.get('access_token')){setSess({access_token:h.get('access_token'),refresh_token:h.get('refresh_token'),expires_in:h.get('expires_in')});history.replaceState(null,'',location.pathname+location.search);return'ok'}
+ if(h.get('access_token')){const kind=h.get('type');setSess({access_token:h.get('access_token'),refresh_token:h.get('refresh_token'),expires_in:h.get('expires_in')});history.replaceState(null,'',location.pathname+location.search);return kind==='recovery'?'recovery':'ok'}
  if(h.get('error')){history.replaceState(null,'',location.pathname+location.search);return h.get('error_description')||h.get('error')}return''}
 function push(){clearTimeout(pt);pt=setTimeout(async()=>{const t=await token();if(!t||!S?.u)return;try{await api('/rest/v1/bs_profiles?on_conflict=id',{m:'POST',t,h:{Prefer:'resolution=merge-duplicates,return=minimal'},b:{id:S.u.id,data:{d:P,l:PR},updated_at:new Date().toISOString()}})}catch{}},1500)}
 async function pull(){const t=await token();if(!t||!S?.u)return false;try{const r=await api('/rest/v1/bs_profiles?select=data&id=eq.'+S.u.id,{t}),d=r[0]?.data;
@@ -128,37 +130,56 @@ export function openGeo(done){
  m.onclick=e=>{const b=e.target.closest('[data-c]');if(b){const c=b.dataset.c,i=P.geos.indexOf(c);if(i>=0){if(P.geos.length>1)P.geos.splice(i,1)}else P.geos.push(c);draw()}else if(e.target.id==='gd')closeModal()};
  onClose=()=>{savePrefs();done?.()}}
 
-const ichip=id=>{const i=P.sel.indexOf(id);return`<button class="chip${i>=0?' on':''}" data-i="${id}" aria-pressed="${i>=0}">${i>=0?`<b title="Raise priority">${i+1}</b>`:''}${esc(LBL[id])}</button>`};
+const ichip=id=>{const i=P.sel.indexOf(id);return i<0?`<button class="chip" data-i="${id}" aria-pressed="false">${esc(LBL[id])}</button>`:`<span class="cw"><button class="chip on" data-i="${id}" aria-pressed="true"><b>${i+1}</b>${esc(LBL[id])}</button>${i>0?`<button class="up" data-up="${id}" type="button" aria-label="Move ${esc(LBL[id])} up" title="Move up">↑</button>`:'<span class="top1" title="Your top pick gets the most stories">Top</span>'}</span>`};
 export function openInterests(done){
- const m=modal(`<h2 class="serif">Your interests</h2><p class="mu">Everything we can serve. Tap to add or remove. Your order is your priority - tap a number to raise it.</p><input id="iq" placeholder="Search interests…" autocomplete="off"><div id="il"></div><button class="btn fill wide" id="id"></button>`,'big'),
+ const m=modal(`<h2 class="serif">Your interests</h2><p class="mu">Everything we can serve. Tap an interest to add or remove it. Tap ↑ to move one higher: your top pick gets the most stories.</p><input id="iq" placeholder="Search interests…" autocomplete="off"><div id="il"></div><button class="btn fill wide" id="id"></button>`,'big'),
  draw=()=>{const q=$('#iq').value.trim().toLowerCase();$('#il').innerHTML=Object.entries(GROUPS).map(([g,gl])=>{const cs=CATS.filter(c=>c[2]===g&&(!q||c[1].toLowerCase().includes(q)));return cs.length?`<h5>${gl}</h5><div class="chips">${cs.map(c=>ichip(c[0])).join('')}</div>`:''}).join('');$('#id').textContent='Done · '+P.sel.length+' selected'};
  draw();$('#iq').oninput=draw;
- m.onclick=e=>{const b=e.target.closest('[data-i]');if(b){toggleInterest(b.dataset.i,e.target.tagName==='B');draw()}else if(e.target.id==='id')closeModal()};
+ m.onclick=e=>{const up=e.target.closest('[data-up]'),b=e.target.closest('[data-i]');if(up){toggleInterest(up.dataset.up,true);draw()}else if(b){toggleInterest(b.dataset.i,false);draw()}else if(e.target.id==='id')closeModal()};
  onClose=()=>{savePrefs();done?.()}}
 
 export function openAuth(msg,mode='up'){
  if(captchaWidget!==null)window.turnstile?.remove(captchaWidget);captchaWidget=null;authCaptcha='';
  const up=mode==='up',lab=up?'Create account':'Log in',
- m=modal(`<h2 class="serif">${up?'Create your free account':'Welcome back'}</h2><p class="mu">${esc(msg||'')}</p><button class="btn gbtn" id="go">Continue with Google</button><div class="or"><span>or use email</span></div><div class="tabs"><button data-m="up" class="${up?'on':''}">Sign up</button><button data-m="in" class="${up?'':'on'}">Log in</button></div>${up?`<input id="an" placeholder="Your name" autocomplete="name" value="${esc(P.name)}">`:''}<input id="ae" type="email" placeholder="Email" autocomplete="email"><input id="ap" type="password" placeholder="Password (6+ characters)" autocomplete="${up?'new':'current'}-password"><div id="captcha" aria-label="Security check"></div><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="as">${lab}</button><small class="mu">By continuing you agree to our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/copyright" target="_blank">Copyright notice</a>.</small>`),
+ m=modal(`<h2 class="serif">${up?'Create your free account':'Sign in or create a free account'}</h2><p class="mu">${esc(msg||'')}</p><button class="btn gbtn" id="go">Continue with Google</button><div class="or"><span>or use email</span></div><div class="tabs"><button data-m="up" class="${up?'on':''}">Sign up</button><button data-m="in" class="${up?'':'on'}">Log in</button></div>${up?`<input id="an" placeholder="Your name" autocomplete="name" value="${esc(P.name)}">`:''}<input id="ae" type="email" placeholder="Email" autocomplete="email"><input id="ap" type="password" placeholder="Password (6+ characters)" autocomplete="${up?'new':'current'}-password">${up?'':'<span class="fgt"><button class="link" type="button" id="fg">Forgot password?</button></span>'}<div id="captcha" aria-label="Security check"></div><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="as">${lab}</button><small class="mu">By continuing you agree to our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/copyright" target="_blank">Copyright notice</a>.</small>`),
  go=async()=>{const er=$('#er'),b=$('#as'),email=$('#ae').value.trim(),pw=$('#ap').value;er.style.color='';er.textContent='';
   if(!/^\S+@\S+\.\S+$/.test(email))return er.textContent='Please enter a valid email address.';
   if(pw.length<6)return er.textContent='Password must be at least 6 characters.';
   if(!authCaptcha)return er.textContent='Complete the security check before continuing.';
   b.disabled=true;b.textContent='Please wait…';
   try{let ok;if(up){const nm=$('#an').value.trim();if(nm){P.name=nm.slice(0,24);savePrefs()}ok=await signUp(email,pw,P.name,authCaptcha)}else ok=await signIn(email,pw,authCaptcha);
-   if(!ok){er.style.color='#CFE6D0';er.textContent='Account created. Check your email to confirm it, then log in.';b.disabled=false;b.textContent=lab;authCaptcha='';window.turnstile?.reset(captchaWidget);return}
+   if(!ok){er.style.color='var(--ok)';er.textContent='Account created. Check your email to confirm it, then log in.';b.disabled=false;b.textContent=lab;authCaptcha='';window.turnstile?.reset(captchaWidget);return}
    await entered()}catch(e){er.textContent=e.message;b.disabled=false;b.textContent=lab;authCaptcha='';window.turnstile?.reset(captchaWidget)}};
- m.onclick=e=>{const t=e.target;if(t.id==='go')google();else if(t.id==='as')go();else if(t.dataset.m)openAuth(msg,t.dataset.m)};
+ m.onclick=e=>{const t=e.target;if(t.id==='go')google();else if(t.id==='as')go();else if(t.id==='fg')openForgot($('#ae').value.trim());else if(t.dataset.m)openAuth(msg,t.dataset.m)};
  m.onkeydown=e=>{if(e.key==='Enter')go()};$('#ae')?.focus();setupCaptcha()}
+// "Forgot password?": Supabase emails a link that brings the person back to the site, where openNewPassword() lets them choose a new one.
+export function openForgot(prefill=''){
+ if(captchaWidget!==null)window.turnstile?.remove(captchaWidget);captchaWidget=null;authCaptcha='';
+ const m=modal(`<h2 class="serif">Reset your password</h2><p class="mu">Enter the email you signed up with and we will send you a link to choose a new password.</p><input id="fe" type="email" placeholder="Email" autocomplete="email" value="${esc(prefill)}"><div id="captcha" aria-label="Security check"></div><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="fs">Send reset link</button><button class="btn wide" id="fb" type="button">Back to sign in</button>`),
+ send=async()=>{const er=$('#er'),b=$('#fs'),email=$('#fe').value.trim();er.style.color='';er.textContent='';
+  if(!/^\S+@\S+\.\S+$/.test(email))return er.textContent='Please enter a valid email address.';
+  if(!authCaptcha)return er.textContent='Complete the security check before continuing.';
+  b.disabled=true;b.textContent='Please wait…';
+  try{await api('/auth/v1/recover?redirect_to='+encodeURIComponent(location.origin+'/'),{m:'POST',b:{email,gotrue_meta_security:{captcha_token:authCaptcha}}});
+   er.style.color='var(--ok)';er.textContent='If an account exists for that email, a reset link is on its way. Check your inbox and your spam folder.';b.textContent='Link sent'}
+  catch(e){er.textContent=e.message;b.disabled=false;b.textContent='Send reset link';authCaptcha='';window.turnstile?.reset(captchaWidget)}};
+ m.onclick=e=>{const t=e.target;if(t.id==='fs')send();else if(t.id==='fb')openAuth('','in')};
+ m.onkeydown=e=>{if(e.key==='Enter')send()};$('#fe')?.focus();setupCaptcha()}
+function openNewPassword(){
+ const m=modal(`<h2 class="serif">Choose a new password</h2><p class="mu">You are signed in. Pick a new password for next time.</p><input id="np" type="password" placeholder="New password (6+ characters)" autocomplete="new-password"><input id="np2" type="password" placeholder="Repeat the new password" autocomplete="new-password"><p class="err" id="er" role="alert"></p><button class="btn fill wide" id="ns">Save password</button>`),
+ save=async()=>{const er=$('#er'),b=$('#ns'),a=$('#np').value,c=$('#np2').value;er.style.color='';er.textContent='';
+  if(a.length<6)return er.textContent='Password must be at least 6 characters.';
+  if(a!==c)return er.textContent='The two passwords do not match.';
+  b.disabled=true;b.textContent='Saving…';
+  try{await api('/auth/v1/user',{m:'PUT',t:await token(),b:{password:a}});er.style.color='var(--ok)';er.textContent='Password updated.';setTimeout(()=>entered(),700)}
+  catch(e){er.textContent=e.message;b.disabled=false;b.textContent='Save password'}};
+ m.onclick=e=>{if(e.target.id==='ns')save()};m.onkeydown=e=>{if(e.key==='Enter')save()};$('#np')?.focus()}
 export function tune(){if(!P.sel.length)return'Pick at least one interest first.';savePrefs();if(S){location.hash='#/me/read';return''}openAuth(`Almost there${P.name?', '+P.name:''} - create your free account to unlock your personal Read and Watch feeds.`,'up');return''}
 
 /* ---------- header and footer ---------- */
-function paintHs(){const h=$('#hs');if(h)h.innerHTML=S?'<a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" id="so2">Sign out</button>':'<button class="link" id="si">Sign in</button>';document.dispatchEvent(new Event('bs:auth'))}
-document.addEventListener('click',e=>{if(e.target.id==='si')openAuth('Welcome back - sign in to open your personal briefing.','in');else if(e.target.id==='so2')out()});
-function paintFooter(){const f=$('#foot'),L=[];if(!f)return;if(BS.email)L.push(`<a href="mailto:${esc(BS.email)}">${esc(BS.email)}</a>`);
- const soc=(k,u,n)=>{const v=BS[k];if(v)L.push(`<a href="${/^https?:/.test(v)?esc(v):u+esc(v)}" target="_blank" rel="noopener noreferrer">${n}</a>`)};
- soc('x','https://x.com/','X');soc('linkedin','https://www.linkedin.com/company/','LinkedIn');soc('instagram','https://instagram.com/','Instagram');soc('youtube','https://youtube.com/@','YouTube');
- f.innerHTML=`<div>© ${new Date().getFullYear()} ${esc(BS.company||'BingleSignal')}. All rights reserved.</div><nav><a href="#/pricing">Pricing</a><a href="/terms">Terms</a><a href="/refund">Refunds</a><a href="/privacy">Privacy Policy</a><a href="/contact">Contact</a><a href="/copyright">Copyright</a>${L.join('')}</nav><p>Headlines, summaries and videos belong to their publishers and creators; every item links to its original source. Videos play through YouTube - by watching you agree to the <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">YouTube Terms of Service</a> and the <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google Privacy Policy</a>. Background text from Wikipedia (CC BY-SA).</p>`}
+function paintHs(){const h=$('#hs');if(h)h.innerHTML=S?'<a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" id="so2">Sign out</button>':'<button class="link" id="si" type="button">Sign in</button><button class="btn fill sm" id="sf" type="button">Start free</button>';document.dispatchEvent(new Event('bs:auth'))}
+document.addEventListener('click',e=>{const t=e.target;if(t.id==='si'||t.closest?.('[data-signin]'))openAuth('Sign in to open your personal briefing, or create a free account in seconds.','in');else if(t.id==='sf'||t.closest?.('[data-start]'))openAuth('Start your 7-day free trial. No card needed.','up');else if(e.target.id==='so2')out()});
+function paintFooter(){const f=$('#foot');if(f)f.innerHTML=footerHTML()}
 
 /* ---------- ranking engine ---------- */
 const HL={n:14,r:20,h:16,b:48,y:96},POS=[1,.8,.65,.5,.4],PL={n:'News',r:'Reddit',h:'Hacker News',b:'Blog',y:'Video'},
@@ -219,14 +240,14 @@ eng=i=>i.p==='y'?fmt(i.e||0)+' views':i.p==='r'||i.p==='h'?'▲ '+fmt(i.e||0):''
 const pkR=i=>i.summary?` data-pk-t="${esc(i.t)}" data-pk-y="${esc(i.summary)}" data-pk-s="${esc(i.s)}" data-pk-u="${safe(i.u)}"`:'';
 function cardR(c){const i=c.i,n=i.k.filter(k=>P.sel.includes(k)).length,
  t=c.ex?'<span class="tag ex" title="Something new to explore">New</span>':n>1?`<span class="tag mt" title="Touches ${n} interests">★ ${n}</span>`:'';
- return`<article class="card item" data-id="${i.id}"${pkR(i)}><div class="ct"><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.summary?`<p class="sm">${esc(i.summary)}</p>`:i.x?`<p class="sm">${esc(short(i.x,160))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" title="Like" class="${PR.lk.includes(i.id)?'on':''}">♥</button><button data-a="save" title="Save" class="${PR.sv.includes(i.id)?'on':''}">⚑</button><button data-a="hide" title="Less like this">✕</button><button data-a="mute" title="Mute this source">⊘</button></span></div></article>`}
+ return`<article class="card item" data-id="${i.id}"${pkR(i)}><div class="ct"><small>${esc(i.s)} · ${ago(i.d*1000)}${i.n>1?' · '+i.n+' sources':''}</small>${t}</div><a class="tt" href="${safe(i.u)}" target="_blank" rel="noopener noreferrer" data-a="open">${esc(i.t)}</a>${i.summary?`<p class="sm">${esc(i.summary)}</p>`:i.x?`<p class="sm">${esc(short(i.x,160))}</p>`:''}<div class="chips sm">${chips(i)}</div><div class="acts"><small>${eng(i)}</small><span><button data-a="like" title="Like" class="${PR.lk.includes(i.id)?'on':''}">♥</button><button data-a="save" title="Save" class="${PR.sv.includes(i.id)?'on':''}">⚑</button><button data-a="share" title="Share this story" aria-label="Share this story">↗</button><button data-a="hide" title="Less like this">✕</button><button data-a="mute" title="Mute this source">⊘</button></span></div></article>`}
 function cardV(c){const i=c.i;return`<div class="vc" data-id="${i.id}" data-a="vp" role="button" tabindex="0"><div class="th"><img src="https://i.ytimg.com/vi/${encodeURIComponent(i.vid)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"><span class="pb">▶</span></div><h4>${esc(i.t)}</h4>${i.summary?`<p class="vn">${esc(short(i.summary,170))}</p>`:''}${i.why_it_matters?`<p class="why">${esc(i.why_it_matters)}</p>`:''}<small>${esc(i.s)} · ${fmt(i.e||0)} views · ${ago(i.d*1000)}</small><div class="chips sm">${c.ex?'<span>Explore</span>':c.tb>.4?'<span>Like your picks</span>':''}${chips(i)}</div></div>`}
-function shell(tab){let b=$('#home .brand')?.outerHTML||'<span class="brand serif">BingleSignal</span>';b=b.replace('id="g"','id="g2"').replace('url(#g)','url(#g2)');
- $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a href="#/" aria-label="Home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a>${BS.emailBeta?`<a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a>`:''}</nav><div class="hdr-r"><a class="link" href="#/onboarding">Brief settings</a><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
-function summary(n,total){return`<section class="sum"><div class="eyebrow">${TAB==='read'?'Read':'Watch'} · ranked for you</div><h1 class="serif">${P.name?esc(P.name)+', your':'Your'} ${TAB==='read'?'reading list':'video queue'}</h1><div class="chips sm">${P.geos.map(g=>`<span>${esc(cname(g))}</span>`).join('')}${P.sel.slice(0,8).map(id=>`<span>${esc(LBL[id])}</span>`).join('')}${P.sel.length>8?`<span>+${P.sel.length-8} more</span>`:''}</div><small>${n} ranked from ${total} candidates · feed built ${POOL.gen?ago(POOL.gen*1000):'just now'} · it learns from every like, hide, skip and watch</small></section>`}
+function shell(tab){const b=brandInner('g2');
+ $('#app').innerHTML=`<header class="top"><div class="wrap bar"><a class="brand serif" href="/" aria-label="BingleSignal home">${b}</a><nav class="tabs2"><a href="#/me/read" class="${tab==='read'?'on':''}">READ</a><a href="#/me/watch" class="${tab==='watch'?'on':''}">WATCH</a>${BS.emailBeta?`<a href="#/email" class="${tab==='email'?'on':''}">EMAIL BETA</a>`:''}</nav><div class="hdr-r"><a class="link" href="#/onboarding">Brief settings</a><a class="link" href="#/account">Account</a><button class="link" data-a="ep">Preferences</button><button class="link" data-a="so">Sign out</button></div></div></header><main class="wrap" id="am"></main>`}
+function summary(n,total){return`<section class="sum"><div class="eyebrow">${TAB==='read'?'Read':'Watch'} · ranked for you</div><h1 class="serif">${P.name?esc(P.name)+', your':'Your'} ${TAB==='read'?'reading list':'video queue'}</h1><div class="chips sm">${P.geos.map(g=>`<span>${esc(cname(g))}</span>`).join('')}${P.sel.slice(0,8).map(id=>`<span>${esc(LBL[id])}</span>`).join('')}${P.sel.length>8?`<span>+${P.sel.length-8} more</span>`:''}</div><small>${n} ranked from ${plural(total,'candidate')} · feed built ${POOL.gen?ago(POOL.gen*1000):'just now'} · it learns from every like, hide, skip and watch</small></section>`}
 function empty(){return`<div class="card end">Your personal feed is being prepared. The first edition appears within a few minutes of the first automatic build - please check back shortly.</div>`}
 function renderRead(){
- const cap=BS.readCap||200;READ=rank(POOL.items,cap,false);MAXU=READ[0]?.u||1;SHOWN=0;SK=0;VIS.clear();obs?.disconnect();
+ const cap=BS.readCap||200;READ=dropRepeats(rank(POOL.items,cap,false),c=>c.i.t);MAXU=READ[0]?.u||1;SHOWN=0;SK=0;VIS.clear();obs?.disconnect();
  if(!READ.length){$('#am').innerHTML=summary(0,0)+empty();return}
  const cnt={};READ.forEach(c=>cnt[c.i.p]=(cnt[c.i.p]||0)+1);
  $('#am').innerHTML=summary(READ.length,POOL.items.filter(i=>!i.v).length)+`<div class="pills"><button class="chip${PF==='all'?' on':''}" data-a="pf" data-k="all">All ${READ.length}</button>${Object.keys(cnt).map(k=>`<button class="chip${PF===k?' on':''}" data-a="pf" data-k="${k}">${PL[k]} ${cnt[k]}</button>`).join('')}</div><div id="rl"></div><div id="sent"></div>`;
@@ -264,7 +285,7 @@ async function recordEditionCompletion(){
 function renderWatch(){
  const cap=BS.watchCap||200,W=capPerKey(rank(POOL.items,cap+12,true),c=>c.i.s,3).slice(0,cap); // at most 3 videos per channel up front
 
- $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${W.length} videos for you. Playing a video teaches your feed what you really like.</div>`:empty())}
+ $('#am').innerHTML=summary(W.length,POOL.items.filter(i=>i.v).length)+(W.length?`<div class="vgrid">${W.map(cardV).join('')}</div><div class="end">Top ${plural(W.length,'video')} for you. Playing a video teaches your feed what you really like.</div>`:empty())}
 async function emailApi(path,method='GET',body){
  let access=await token();if(!access)throw new Error('Your sign-in expired. Please sign in again.');
  const send=access=>fetch(path,{method,headers:{authorization:'Bearer '+access,'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
@@ -402,6 +423,7 @@ function forgetItem(kind,id){const key={liked:'lk',saved:'sv',hidden:'hid'}[kind
 const FIRST=new Set();
 function tally(ms){if(ms<900)return;const m=PR.tm||(PR.tm={n:0,s:0});m.n++;m.s+=Math.min(ms/1000,90);persist()}
 function like(i){const x=PR.lk.indexOf(i.id);if(x>=0){PR.lk.splice(x,1);persist();return false}PR.lk.push(i.id);remember(i);ACT.add(i.id);learn(i,{c:1,l:1},1.2);sendFeedback(i,'like');reTail();return true}
+function shareStory(i){modal(`<h2 class="serif">Share this story</h2><p class="mu">${esc(i.t)}</p>${shareHTML(i.t,i.u)}`)}
 function save(i){const x=PR.sv.indexOf(i.id);if(x>=0){PR.sv.splice(x,1);persist();return false}PR.sv.push(i.id);remember(i);ACT.add(i.id);learn(i,{c:1,s:1},1.5);sendFeedback(i,'save');reTail();return true}
 function hide(i,signal='less_like',source){PR.hid.push(i.id);remember(i);ACT.add(i.id);learn(i,{k:1},-1.5);sendFeedback(i,signal,source);reTail()}
 function play(i){
@@ -417,7 +439,7 @@ $('#app').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!
  if(a==='pf'){PF=b.dataset.k;return renderRead()}if(!i)return;
  if(a==='open'){ACT.add(i.id);learn(i,{c:1},.5);sendFeedback(i,'open')}
  else if(a==='like')b.classList.toggle('on',like(i));else if(a==='save')b.classList.toggle('on',save(i));
- else if(a==='hide'){hide(i);card.remove()}else if(a==='mute'){hide(i,'mute_source',i.s);card.remove()}else if(a==='vp')play(i)});
+ else if(a==='share')shareStory(i);else if(a==='hide'){hide(i);card.remove()}else if(a==='mute'){hide(i,'mute_source',i.s);card.remove()}else if(a==='vp')play(i)});
 $('#app').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.dataset?.a==='vp'){e.preventDefault();e.target.click()}});
 
 /* ---------- routing ---------- */
@@ -425,6 +447,7 @@ export async function route(){
  const rid=++RID;obs?.disconnect();sobs?.disconnect();VIS.clear();
  const r=fromHash();
  if(/^#\/(pricing|paused|account|manage)(\/|$)/.test(location.hash))return;
+ if(r==='recovery'){openNewPassword();return}
  if(r==='ok'){await entered();return}
  if(r)openAuth('Sign-in did not complete: '+r,'in');
  if(/^#\/email(?:\?|$)/.test(location.hash)&&!BS.emailBeta){location.hash='#/me/read';return}
@@ -447,6 +470,8 @@ window.BSAuth={
  has:()=>!!S,
  out:()=>out(),
  expired:()=>{drop();expired()},
+ signin:msg=>openAuth(msg||'Sign in to open your personal briefing.','in'),
+ signup:msg=>openAuth(msg||'Start your 7-day free trial. No card needed.','up'),
  lists:()=>myLists(),
  forget:(kind,id)=>forgetItem(kind,id),
  stats:()=>({stories:PR.tm?.n||0,seconds:Math.round(PR.tm?.s||0)}),

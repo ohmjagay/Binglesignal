@@ -8,7 +8,12 @@ keep_vars = true
 
 [assets]
 directory = "./public"
-run_worker_first = ["/api/*"]
+# ASSETS lets the Worker read the site's own files. It is used to write today's top headlines into the homepage HTML (so Google and WhatsApp can read them)
+# and to show the friendly 404 page. If the homepage ever misbehaves, change run_worker_first to ["/api/*"] and redeploy: the site then works exactly as before.
+binding = "ASSETS"
+# Any address that does not exist shows public/404.html (a friendly "Page not found" page) instead of a blank error.
+not_found_handling = "404-page"
+run_worker_first = ["/api/*", "/"]
 
 [ai]
 binding = "AI"

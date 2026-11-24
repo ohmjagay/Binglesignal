@@ -15,16 +15,16 @@ window.BS={
     tagline:"The signal from today's news, summarised for you, with videos picked for how you watch.",
     // One line per bullet. These are what a subscriber gets.
     features:[
-      'A finite daily briefing, Rebuilt every 6 hours around your interests and region',
-      'READ: A clear summary of every story plus a "why it matters" line, with the original source one click away',
+      'A finite daily briefing, rebuilt every 6 hours around your interests and region',
+      'READ: a clear summary of every story plus a "why it matters" line, with the original source one click away',
       'WATCH: video picks with a short note on what each one covers, ranked by what you actually watch',
       'A feed that learns what you like and shows you more of it, and less of what you don’t',
-      'Content Picked and Summarised by AI and human editors, with a focus on what matters to you',
+      'Stories are picked and summarised by AI, and every one links to its original source',
     ],
         // Things you are building but have not shipped. They show greyed out with a "soon" tag. Leave [] for none.
     soon:[
-      'AI Email/Gmail summarizer for your inbox, so you can read the signal from your emails in minutes',
-      'Users who are spending 2-3 hours daily to read emails will be reduced to 10-15 minutes, and they will be able to read the signal from their emails on the go',
+      'AI email and Gmail summariser for your inbox, so you can read the signal from your emails in minutes',
+      'Cut 2-3 hours of daily email reading down to 10-15 minutes, and catch up on the go',
     ],
     // Small print under the price card. {usd} turns into your price ($5). The Refunds and Terms links are added after it automatically.
     fine:'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
@@ -39,6 +39,27 @@ window.BS={
       ['How is the rupee price worked out?','{usd} is converted at the exchange rate on the day you subscribe and rounded up to the next 5 rupees. That rupee amount then stays the same every month.']
     ]
   },
+  // ===== WHAT IS FREE AND WHAT IS PAID (shown as a table on the pricing page) =====
+  // One row per line: [what you get, free for everyone, included with the plan]. 1 = yes, 0 = no. {readCap} and {watchCap} become the numbers below.
+  compare:{
+    headings:['Free, no sign-up','7-day trial, then $5 a month'],
+    rows:[
+      ['The top stories of the day, each linked to its original source',1,1],
+      ['One full story summary every day: what happened and why it matters',1,1],
+      ['READ: up to {readCap} stories ranked for you, every one summarised',0,1],
+      ['WATCH: up to {watchCap} video picks with a note on what each covers',0,1],
+      ['A feed that learns from what you like, save and skip',0,1],
+      ['Your interests and region kept on every device you sign in on',0,1],
+    ],
+  },
+  // ===== SOCIAL PROOF: add this only when it is TRUE. Leave '' and [] to hide it. =====
+  // proof: one line shown under the headline, for example 'Read by 250 professionals in 12 countries'.
+  // reviews: real words from real readers, with their permission. Example: {quote:'I read it with my coffee and I am done by 9.', name:'Priya S.', role:'Product manager, Bengaluru'}
+  proof:'',
+  reviews:[],
+  // ===== ABOUT PAGE (/about): the person behind BingleSignal. Fill these in and the page shows them automatically. =====
+  // photo: put your picture in the public folder, for example public/hari.jpg, and write 'hari.jpg' here. story: a few short paragraphs, separate them with a blank line.
+  about:{ name:'', role:'Founder, BingleSignal', photo:'', linkedin:'', story:'' },
   emailBeta:false,  // the invited email beta is paused; set true (and EMAIL_BETA_ENABLED=true in Cloudflare) to bring its tab back
  
  supabaseUrl:'https://bpgstmqbbvvlibgcssvq.supabase.co',
@@ -47,6 +68,10 @@ window.BS={
  readCap:200,  // stories in READ (same for every subscriber: there is one plan)
  watchCap:200,  // videos in WATCH
  company:'BingleSignal',
- // Fill these in later (leave '' to hide). Example: email:'hello@binglesignal.com', x:'binglesignal', linkedin:'binglesignal', instagram:'binglesignal', youtube:'binglesignal'
- email:'support@binglesignal.com', x:'', linkedin:'https://www.linkedin.com/company/binglesignal/', instagram:'', youtube:''
+ city:'Jaipur, India',   // shown at the bottom of every page next to the company name. Leave '' to hide.
+ operator:'',            // optional: who runs it, for example 'Operated by Your Full Name'. Shown at the bottom of every page. Leave '' to hide.
+ site:'https://binglesignal.com',
+ // Fill these in later (leave '' to hide). A full link (https://...) or just the handle both work.
+ // Example: email:'hello@binglesignal.com', x:'binglesignal', linkedin:'binglesignal', instagram:'binglesignal', youtube:'binglesignal', whatsapp:'https://whatsapp.com/channel/...'
+ email:'support@binglesignal.com', x:'', linkedin:'https://www.linkedin.com/company/binglesignal/', instagram:'', youtube:'', whatsapp:''
 };
