@@ -1,0 +1,11 @@
+Fonts hosted on binglesignal.com (self-hosted so visitors never contact a font server)
+
+Inter (inter-latin-wght-normal.woff2)
+  Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  Licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org)
+
+Newsreader (newsreader-latin-wght-normal.woff2)
+  Copyright 2020 The Newsreader Project Authors (https://github.com/productiontype/Newsreader)
+  Licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org)
+
+Both fonts are free to use, host and embed, including commercially. This file keeps the licence notice with the font files as the licence asks.

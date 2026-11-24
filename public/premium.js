@@ -65,16 +65,17 @@ function paintBanner() {
   const b = $('#bn'); if (!b) return;
   const a = ACC; let m = '';
   if (a?.status === 'trialing' && a.trial_subscribed) m = `<span><b>Free trial</b> · ${dayWord(a.days_left)} left · you are subscribed, first payment on <b>${fd(a.trial_ends_at)}</b></span><a class="btn sm" href="#/account">Manage plan</a>`;
-  else if (a?.status === 'trialing') m = `<span><b>Free trial</b> · ${dayWord(a.days_left)} left · no card needed. Subscribe any time and the days you have left are added to your plan.</span><a class="btn sm" href="#/pricing">Subscribe</a>`;
+  else if (a?.status === 'trialing') m = `<span><b>Free trial</b> · ${dayWord(a.days_left)} left · no card needed. Subscribe any time and the days you have left are added to your plan.</span><a class="btn sm" href="/pricing">Subscribe</a>`;
   else if (a?.status === 'past_due') m = '<span><b>Payment problem.</b> Please update your payment method to keep your plan.</span><a class="btn sm" href="#/account">Manage plan</a>';
-  else if (a?.status === 'canceled' && a.has_access) m = `<span>Your plan ends on <b>${fd(a.current_period_end)}</b>.</span><a class="btn sm" href="#/pricing">Renew</a>`;
+  else if (a?.status === 'canceled' && a.has_access) m = `<span>Your plan ends on <b>${fd(a.current_period_end)}</b>.</span><a class="btn sm" href="/pricing">Renew</a>`;
   b.innerHTML = m; b.hidden = !m;
 }
 
-const brandHTML = () => { const a = document.querySelector('#home .brand'); return a ? '<a class="brand serif" href="#/">' + a.innerHTML.replace('id="g"', 'id="g3"').replace('url(#g)', 'url(#g3)') + '</a>' : '<a class="brand serif" href="#/"><span>Bingle<em>Signal</em></span></a>'; };
+const brandHTML = () => '<a class="brand serif" href="/" aria-label="BingleSignal home">' + (window.BSChrome?.brandInner ? window.BSChrome.brandInner('g3') : '<span>Bingle<em>Signal</em></span>') + '</a>';
 function frame(inner) {
   const p = $('#px');
-  p.innerHTML = `<header class="top"><div class="wrap bar">${brandHTML()}<nav class="hdr-r"><a class="link" href="#/pricing">Pricing</a>${authed() ? '<a class="link" href="#/account">Account</a><a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" data-so>Sign out</button>' : '<a class="btn fill sm" href="#/me/read">Sign in</a>'}</nav></div></header><main class="pxw">${inner}</main>`;
+  const light = document.documentElement?.getAttribute?.('data-theme') === 'light';
+  p.innerHTML = `<header class="top"><div class="wrap bar">${brandHTML()}<nav class="hdr-r" aria-label="Main"><a class="link nv" href="/pricing">Pricing</a>${authed() ? '<a class="link" href="#/account">Account</a><a class="btn fill sm" href="#/me/read">My briefing</a><button class="link" data-so>Sign out</button>' : '<button class="link" type="button" data-signin>Sign in</button><button class="btn fill sm" type="button" data-start>Start free</button>'}</nav><button class="tgl" id="tgl" type="button" aria-label="${light ? 'Switch to dark mode' : 'Switch to light mode'}" title="Light or dark">${light ? '☾' : '☀'}</button></div></header><main class="pxw">${inner}</main>`;
   p.hidden = false; $('#home').hidden = true; $('#app').hidden = true; window.scrollTo(0, 0);
 }
 
@@ -101,7 +102,7 @@ async function pricing() {
   const active = ACC?.status === 'active';
   const trialing = ACC?.status === 'trialing', trialSubscribed = trialing && !!ACC.trial_subscribed;
   let cta;
-  if (!authed()) cta = `<a class="btn fill wide" href="#/me/read">Start 7-day free trial</a><small class="mu">No card needed. Subscribe during the trial and the days you have left are added to your plan, then $${USD} a month.</small>`;
+  if (!authed()) cta = `<button class="btn fill wide" type="button" data-start>Start 7-day free trial</button><small class="mu">No card needed. Subscribe during the trial and the days you have left are added to your plan, then $${USD} a month.</small>`;
   else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
   else if (trialSubscribed) cta = `<button class="btn wide" disabled>Subscribed</button><small class="mu">Your free trial runs until <b>${fd(ACC.trial_ends_at)}</b>. Your first payment of $${USD} is taken then.</small>`;
   else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Please check back shortly.</small>';
@@ -112,7 +113,16 @@ async function pricing() {
   const card = `<article class="card plan hot"><div class="eyebrow">${esc(PLAN.label)}</div><h2 class="serif">${esc(PLAN_NAME)}</h2><p class="mu">${esc(PLAN.tagline)}</p><div class="price"><span>$</span><b>${esc(USD)}</b><small>/mo</small></div><ul>${FEATS.map(([t, live]) => `<li class="${live ? '' : 'soon'}">${esc(t)}${live ? '' : ' <i>soon</i>'}</li>`).join('')}</ul>${cta}</article>`;
   const faq = (PLAN.faq || []).filter((x) => Array.isArray(x) && x[0] && x[1]);
   const faqCard = faq.length ? `<div class="plans faq"><section class="card"><h2 class="serif">${esc(PLAN.faqHeading)}</h2>${faq.map(([q, a]) => `<h3 class="serif">${esc(q)}</h3><p class="mu">${fill(a)}</p>`).join('')}</section></div>` : '';
-  frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p></section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p>${faqCard}<p class="mu fine">${fill(PLAN.fine)} <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
+  // What is free and what is paid: the rows come from config.js (BS.compare).
+  const CMP = BS.compare || {}, rows = (CMP.rows || []).filter((r) => Array.isArray(r) && r[0]), heads = CMP.headings || ['Free, no sign-up', 'With the plan'];
+  const cellText = (t) => fill(t).replace(/\{readCap\}/g, () => String(BS.readCap || 200)).replace(/\{watchCap\}/g, () => String(BS.watchCap || 200));
+  const mark = (yes) => (yes ? '<span class="y" aria-label="Included">✓</span>' : '<span class="n" aria-label="Not included">—</span>');
+  const compareCard = rows.length ? `<div class="plans cmpw"><section class="card cmp"><h2 class="serif">${esc(CMP.title || 'What is free and what is paid')}</h2><table><thead><tr><th scope="col">What you get</th><th scope="col">${esc(heads[0])}</th><th scope="col">${esc(heads[1])}</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${cellText(r[0])}</td><td>${mark(r[1])}</td><td>${mark(r[2])}</td></tr>`).join('')}</tbody></table></section></div>` : '';
+  // Reader quotes and the proof line are shown ONLY when they are filled in (config.js: BS.reviews, BS.proof). Nothing is ever invented.
+  const reviews = (BS.reviews || []).filter((r) => r && r.quote);
+  const reviewCard = reviews.length ? `<div class="plans cmpw"><section class="card"><h2 class="serif">What readers say</h2><div class="rev">${reviews.slice(0, 3).map((r) => `<blockquote><p>“${esc(r.quote)}”</p><cite>${esc([r.name, r.role].filter(Boolean).join(', '))}</cite></blockquote>`).join('')}</div></section></div>` : '';
+  const proofLine = BS.proof ? `<p class="proof">${esc(BS.proof)}</p>` : '';
+  frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p>${proofLine}</section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p>${compareCard}${reviewCard}${faqCard}<p class="mu fine">${fill(PLAN.fine)} <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
 
 // Step 1 of paying. Outside India there is nothing to choose, so go straight to the dollar checkout.
@@ -187,7 +197,7 @@ async function paused() {
   await acc.ready;
   if (!ACC || ACC.has_access) { location.hash = '#/me/read'; return; }
   const tease = ((await loadTeaser()).items || []).slice(0, 3).map((a) => `<li>${esc(a.t)}</li>`).join('');
-  frame(`<section class="pxh"><h1 class="serif">Subscribe to read your briefing</h1><p class="tag">Your settings are saved. Choose a plan and your briefing starts straight away.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="#/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
+  frame(`<section class="pxh"><h1 class="serif">Subscribe to read your briefing</h1><p class="tag">Your settings are saved. Choose a plan and your briefing starts straight away.</p></section><div class="card paused"><h3 class="serif">Today's top stories</h3><ul>${tease}</ul><a class="btn fill" href="/pricing">Choose a plan</a> <a class="btn" href="/contact">Talk to us</a></div>`);
 }
 
 async function account() {
@@ -199,7 +209,7 @@ async function account() {
     const line = a.status === 'trialing' ? trialLine(a)
       : a.status === 'active' ? `Briefing plan.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
       : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : '';
-    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' || a.trial_subscribed ? '' : '<a class="btn" href="#/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
+    body = `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' || a.trial_subscribed ? '' : '<a class="btn" href="/pricing">Subscribe</a>'} ${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : ''}</p><p id="pxmsg" class="mu" role="status"></p>`;
   }
   frame(`<section class="pxh"><h1 class="serif">Your account</h1><p class="tag">${esc(window.BSAuth.user()?.email || '')}</p></section><div class="card">${body}</div><section class="card"><h2 class="serif">Time saved</h2><p id="time-saved" class="mu">${timeSavedHTML()}</p><p class="mu fine">How it is measured: the stories you read × ${ART_MIN} minutes (about how long an original article takes) minus the time you actually spent on their summaries.</p></section><section class="card"><h2 class="serif">Manage account</h2><p class="mu">See the stories you liked, saved or marked not interested, and your subscription plan.</p><p><a class="btn fill" href="#/manage">Manage account</a> <button class="btn" data-so>Sign out</button></p></section><section class="card"><h2 class="serif">Privacy</h2><p class="mu">Delete your connected mailboxes, summaries, email reports, and encryption keys. This cannot be undone.</p><button class="btn" id="delete-email-data">Delete email data</button><p id="privacy-msg" class="mu" role="status"></p></section><p class="mu fine">Invoices, data export or deletion: <a href="mailto:${esc(BS.email || '')}">${esc(BS.email || 'contact us')}</a>${BS.portalUrl ? ` · <a href="${esc(BS.portalUrl)}" target="_blank" rel="noopener noreferrer">Manage billing</a>` : ''}</p>`);
 }
@@ -227,7 +237,7 @@ function planHTML(a) {
   const line = a.status === 'trialing' ? trialLine(a)
     : a.status === 'active' ? `Briefing plan, $${USD} a month.${a.current_period_end ? ' Renews on <b>' + fd(a.current_period_end) + '</b>.' : ''}`
     : a.status === 'canceled' ? `Access until <b>${fd(a.current_period_end)}</b>.` : 'You are not subscribed yet.';
-  return `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : a.trial_subscribed ? '' : '<a class="btn fill" href="#/pricing">Subscribe</a>'}</p><p id="pxmsg" class="mu" role="status"></p>`;
+  return `<p><b>${label[a.status] || esc(a.status)}</b></p><p class="mu">${line}</p><p>${a.status === 'active' ? '<button class="btn" id="cx">Cancel subscription</button>' : a.trial_subscribed ? '' : '<a class="btn fill" href="/pricing">Subscribe</a>'}</p><p id="pxmsg" class="mu" role="status"></p>`;
 }
 
 async function manage() {
@@ -350,12 +360,14 @@ async function cancel() {
 }
 
 function gate() { if (ENFORCE && ACC && !ACC.has_access && /^#\/me/.test(location.hash)) location.hash = '#/paused'; }
+const onPricingPath = () => String(location.pathname || '').replace(/\/+$/, '') === '/pricing';
 async function page() {
   const h = location.hash;
-  if (/^#\/pricing/.test(h)) return pricing();
+  if (/^#\/pricing/.test(h)) { try { history.replaceState(null, '', '/pricing'); } catch { /* the page still shows */ } return pricing(); }
   if (/^#\/paused/.test(h)) return paused();
   if (/^#\/account/.test(h)) return account();
   if (/^#\/manage/.test(h)) return manage();
+  if (onPricingPath() && !/^#\/(me|onboarding|email)/.test(h)) return pricing();
   $('#px')?.setAttribute('hidden', ''); gate();
 }
 // `ready` must depend ONLY on the access check (pages and the feed wait on it, so it must never wait on a page)

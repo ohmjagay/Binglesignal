@@ -1,5 +1,8 @@
 // BingleSignal API: runs on Cloudflare Workers inside the same deploy as the website.
-// Only /api/* reaches this file; every other URL is served straight from /public.
+// Only /api/* and the homepage (/) reach this file; every other URL is served straight from /public.
+//   GET  /              the homepage with today's top headlines written into its HTML (so Google and WhatsApp can read them)
+//   GET  /api/markets    Sensex, Nifty, Nasdaq... for the homepage side panel (cached 5 minutes)
+//   GET  /api/logo?d=    the small icon of a news website, through our own server (cached 30 days)
 //   GET  /api/health
 //   GET  /api/teaser             public teaser of today's top stories: headline plus a short AI summary for the hover box (cached 5 minutes)
 //   GET  /api/quote              live $5 -> INR quote (+GST) shown on the checkout step in India
@@ -14,6 +17,12 @@ import { handleDeliveryRequest } from './delivery.js';
 import { handleLifecycleSchedule } from './lifecycle.js';
 import { checkApiRateLimit } from './rate-limit.js';
 import { missingSupabaseConfig, supabaseKeyHeaders } from './supabase.js';
+import { sanitizeStory, pickRepresentative, publisherTier, publisherTrust, publisherDomain, isGoogleNewsUrl, dropRepeats } from './story-quality.js';
+import { handleMarkets } from './markets.js';
+import { handleLogo } from './logo.js';
+import { handleHome } from './home.js';
+import { notFound } from './notfound.js';
+import { hostOf } from '../../public/textfmt.js';
 import { handleQuote, getInrQuote, assertInrUnitPlan, gstPercent, QuoteUnavailable, PlanMisconfigured } from './pricing.js';
 export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
@@ -434,18 +443,29 @@ export function razorpayMode(env) {
 export function teaserItems(clusters, limit = 30) {
   const items = [];
   for (const cluster of Array.isArray(clusters) ? clusters : []) {
-    const stories = Array.isArray(cluster.stories) ? cluster.stories : [];
-    const rep = stories.find((story) => story && !story.v && story.t && /^https?:\/\//.test(story.u || ''));
+    // Every saved story is cleaned first: junk removed, the real country worked out, one headline style (see story-quality.js).
+    const stories = (Array.isArray(cluster.stories) ? cluster.stories : []).map(sanitizeStory).filter(Boolean);
+    const rep = pickRepresentative(stories);
     if (!rep) continue;
+    const count = cluster.source_count || 1;
+    if (publisherTier(rep.s) === 4 && count < 2) continue;      // an unknown website on its own is never put on the front page
     const ms = Number(rep.d) > 1e12 ? Number(rep.d) : Number(rep.d) * 1000;
     if (!Number.isFinite(ms)) continue;
+    const q = Math.max(...stories.filter((x) => !x.v).map((x) => Number(x.q) || 0));
+    const trust = Math.min(1.2, Math.max(0.4, publisherTrust(rep.s) / (Number(rep.tr) || 0.75)));   // known outlets first, unknown ones sink
+    const logo = isGoogleNewsUrl(rep.u) ? publisherDomain(rep.s) : hostOf(rep.u);
     items.push({
-      id: rep.id, t: rep.t, u: rep.u, s: rep.s, d: new Date(ms).toISOString(),
-      r: ['IN', 'US'].includes(rep.g?.[0]) ? rep.g[0] : 'GL',
-      k: Array.isArray(rep.k) ? rep.k.slice(0, 5) : [], c: cluster.story_id, n: cluster.source_count || 1, q: Number(rep.q) || 0,
+      score: q * trust,
+      item: {
+        id: rep.id, t: rep.t, u: rep.u, s: rep.s, d: new Date(ms).toISOString(),
+        r: ['IN', 'US', 'EU'].includes(rep.g?.[0]) ? rep.g[0] : 'GL',
+        k: Array.isArray(rep.k) ? rep.k.slice(0, 5) : [], c: cluster.story_id, n: count, q: Number(rep.q) || 0,
+        ...(logo ? { lg: logo } : {}),
+      },
     });
   }
-  return items.sort((a, b) => b.q - a.q).slice(0, limit);
+  const best = items.sort((a, b) => b.score - a.score).map((x) => x.item);
+  return dropRepeats(best).slice(0, limit);      // the same story from two clusters appears once
 }
 
 // Plain text only, at most `max` characters, cut at the end of a sentence where possible. Empty when there is nothing worth showing.
@@ -458,10 +478,24 @@ export function cleanSummary(text, max = 460) {
   return end > max * 0.5 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
 }
 
-// The teaser stays a list of headlines; each one also gets its short AI summary (`y`) when there is one, for the hover box on the homepage.
+// One short line ("why it matters"). Shorter than a summary, so it has its own minimum length.
+export function cleanWhy(text, max = 240) {
+  const clean = String(text || '').replace(/<[^>]*>/g, ' ').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  if (clean.length < 12) return '';
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max - 1);
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  return end > max * 0.5 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
+}
+
+// The teaser stays a list of headlines; each one also gets its short AI summary (`y`) and its "why it matters" line (`w`) when there is one.
+// The summary feeds the hover box and the free "top story" card on the homepage.
 export function addTeaserSummaries(items, notes) {
-  const summaries = new Map((Array.isArray(notes) ? notes : []).map((note) => [note.story_id, cleanSummary(note.summary)]));
-  return items.map((item) => (summaries.get(item.c) ? { ...item, y: summaries.get(item.c) } : item));
+  const byStory = new Map((Array.isArray(notes) ? notes : []).map((note) => [note.story_id, { y: cleanSummary(note.summary), w: cleanWhy(note.why_it_matters) }]));
+  return items.map((item) => {
+    const note = byStory.get(item.c);
+    return note && (note.y || note.w) ? { ...item, ...(note.y ? { y: note.y } : {}), ...(note.w ? { w: note.w } : {}) } : item;
+  });
 }
 
 async function handleTeaser(req, env, ctx) {
@@ -485,7 +519,7 @@ async function handleTeaser(req, env, ctx) {
   let items = teaserItems(await response.json());
   if (!items.length) return json({ error: 'teaser unavailable' }, 503);
   try { // one small extra lookup for the hover summaries; if it fails, the teaser is simply headlines, as before
-    const notes = await sb(env, `/rest/v1/story_notes?select=story_id,summary&story_id=in.(${items.map((item) => encodeURIComponent(item.c)).join(',')})`);
+    const notes = await sb(env, `/rest/v1/story_notes?select=story_id,summary,why_it_matters&story_id=in.(${items.map((item) => encodeURIComponent(item.c)).join(',')})`);
     if (notes.ok) items = addTeaserSummaries(items, await notes.json());
   } catch (error) {
     console.error('teaser: summaries unavailable:', error?.message || error);
@@ -504,6 +538,13 @@ export default {
   async fetch(req, env, ctx) {
     const p = new URL(req.url).pathname;
     try {
+      // The homepage goes through here only to get its headlines written into the HTML. Any problem returns the plain page.
+      if (p === '/' && env.ASSETS) {
+        return await handleHome(req, env, async () => {
+          const res = await handleTeaser(req, env, ctx);
+          return res.ok ? (await res.json()).items : null;
+        });
+      }
       if (p === '/api/health') {
         const missing = missingSupabaseConfig(env);
         return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
@@ -514,6 +555,8 @@ export default {
           supabase: { url: !missing.includes('SUPABASE_URL'), anon_key: !missing.includes('SUPABASE_ANON_KEY'), service_key: !missing.includes('SUPABASE_SERVICE_ROLE_KEY') } });
       }
       if (p === '/api/teaser' && req.method === 'GET') return await handleTeaser(req, env, ctx);
+      if (p === '/api/markets' && req.method === 'GET') return await handleMarkets(req, env, ctx);
+      if (p === '/api/logo' && req.method === 'GET') return await handleLogo(req, env, ctx);
       if (['/api/telegram/webhook', '/api/telegram/link-code', '/api/unsubscribe'].includes(p)) {
         return await handleDeliveryRequest(req, env);
       }
@@ -524,7 +567,7 @@ export default {
       if (p === '/api/privacy/delete-email-data') return await handleDeleteEmailData(req, env);
       if (p.startsWith('/api/email/')) return await handleEmailRequest(req, env);
       if (p === '/api/quote' && req.method === 'GET') return await handleQuote(req, env);
-      if (req.method !== 'POST') return json({ error: 'not found' }, 404);
+      if (req.method !== 'POST') return await notFound(req, env);
       if (p === '/api/checkout' || p === '/api/cancel' || p === '/api/plan/switch') {
         const action = p === '/api/checkout' ? 'checkout' : p === '/api/cancel' ? 'cancel' : 'plan_switch';
         const limit = await checkApiRateLimit(req, env, action);
@@ -539,7 +582,7 @@ export default {
       }
       if (p === '/api/webhooks/razorpay') return await handleRazorpay(req, env);
       if (p === '/api/webhooks/global') return await handleGlobal(req, env);
-      return json({ error: 'not found' }, 404);
+      return await notFound(req, env);
     } catch (e) {
       console.error(`Unhandled error on ${p}: ${e?.message || e}`, e);
       return json({ error: 'server error' }, 500);   // provider will retry

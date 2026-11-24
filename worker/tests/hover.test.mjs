@@ -166,7 +166,8 @@ test('The homepage boxes and the Read headlines are wired to the hover box, whic
   assert.match(home, /class="tile" \$\{lnk\(e\.a\)\}\$\{pk\(e\.a\)\}/, 'homepage tiles');
   assert.match(home, /class="row" \$\{lnk\(a\)\}\$\{pk\(a\)\}/, 'homepage list rows');
   assert.match(home, /pk=a=>a\.y\?/, 'only when the teaser has a summary');
-  assert.match(app, /data-a="open"\$\{pkR\(i\)\}>\$\{esc\(i\.t\)\}<\/a>/, 'Read headline link');
+  assert.match(app, /<article class="card item" data-id="\$\{i\.id\}"\$\{pkR\(i\)\}>/, 'the Read card carries the summary box');
+  assert.match(app, /data-a="open">\$\{esc\(i\.t\)\}<\/a>/, 'Read headline link opens the story');
   assert.match(app, /const pkR=i=>i\.summary\?/, 'only when the story has a summary');
   assert.match(css, /\.pk\{[^}]*pointer-events:none/);
   assert.match(css, /prefers-reduced-motion:reduce\)\{\.pk\{transition:none/);

@@ -1,5 +1,6 @@
 import { authUser, missingSupabaseConfig, supabaseRequest } from './supabase.js';
 import { deliverEdition } from './delivery.js';
+import { sanitizeStory } from './story-quality.js';
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
@@ -99,7 +100,8 @@ export function leanPool(clusterRows, notes) {
   for (const cluster of clusterRows) {
     if (articles >= POOL_LIMITS.articles && videos >= POOL_LIMITS.videos) break;
     const note = notes.get(cluster.story_id) || {};
-    for (const story of Array.isArray(cluster.stories) ? cluster.stories : []) {
+    for (const saved of Array.isArray(cluster.stories) ? cluster.stories : []) {
+      const story = sanitizeStory(saved);       // shopping/junk removed, real country, one headline style: also for stories saved before these rules existed
       if (!story) continue;
       const isVideo = !!story.v;
       if (isVideo ? videos >= POOL_LIMITS.videos : articles >= POOL_LIMITS.articles) continue;
