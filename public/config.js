@@ -16,7 +16,7 @@ window.BS={
     // One line per bullet. These are what a subscriber gets.
     features:[
       'No Advertisements and Sponsership: the briefing is ad-free and your data is never sold or shared',
-      'A finite daily briefing, rebuilt every hours around your interests and region',
+      'A finite daily briefing, rebuilt every hour around your interests and region',
       'READ: a clear summary of every story plus a "why it matters", with the original source one click away',
       'WATCH: video picks with a short note on what each one covers, ranked by what you actually watch',
       'A feed that delivers what you need to knowand shows you more of it, and less of what you don’t',
