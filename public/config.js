@@ -15,16 +15,16 @@ window.BS={
     tagline:"The signal from today's news, summarised for you, with videos picked for how you watch.",
     // One line per bullet. These are what a subscriber gets.
     features:[
-      'A finite daily briefing, rebuilt every 6 hours around your interests and region',
-      'READ: a clear summary of every story plus a "why it matters" line, with the original source one click away',
+      'No Advertisements and Sponsership: the briefing is ad-free and your data is never sold or shared',
+      'A finite daily briefing, rebuilt every hours around your interests and region',
+      'READ: a clear summary of every story plus a "why it matters", with the original source one click away',
       'WATCH: video picks with a short note on what each one covers, ranked by what you actually watch',
-      'A feed that learns what you like and shows you more of it, and less of what you don’t',
-      'Stories are picked and summarised by AI, and every one links to its original source',
+      'A feed that delivers what you need to knowand shows you more of it, and less of what you don’t',
+      'Stories are picked and summarised by Top AI Models, and every item links to its original source',
     ],
         // Things you are building but have not shipped. They show greyed out with a "soon" tag. Leave [] for none.
     soon:[
-      'AI email and Gmail summariser for your inbox, so you can read the signal from your emails in minutes',
-      'Cut 2-3 hours of daily email reading down to 10-15 minutes, and catch up on the go',
+      ,
     ],
     // Small print under the price card. {usd} turns into your price ($5). The Refunds and Terms links are added after it automatically.
     fine:'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by PayPal and Razorpay.',

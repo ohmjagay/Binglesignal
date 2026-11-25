@@ -1,7 +1,7 @@
 {
   "name": "BingleSignal",
   "short_name": "BingleSignal",
-  "description": "Your 15-minute daily news briefing for business people.",
+  "description": "Your 15-minute Executive Briefing.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
