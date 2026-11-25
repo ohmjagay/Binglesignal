@@ -352,12 +352,12 @@ test('Health endpoint reports the visitor country (pricing page uses it to show 
 
 test('Health says which Razorpay plans are configured and never exposes a secret', async () => {
   const full = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), env)).json();
-  assert.deepEqual(full.rails, { razorpay: true, razorpay_inr: true, razorpay_usd: true });
+  assert.deepEqual(full.rails, { razorpay: true, razorpay_inr: true, razorpay_usd: true, paypal: false });   // paypal: false = PayPal not configured in this test env
   assert.equal(JSON.stringify(full).includes('secret'), false);
   assert.deepEqual(razorpayRails({ ...env, RAZORPAY_PLAN_LITE_MONTHLY_USD: '' }), { razorpay: true, razorpay_inr: true, razorpay_usd: false });
   assert.deepEqual(razorpayRails({ ...env, RAZORPAY_KEY_SECRET: '' }), { razorpay: false, razorpay_inr: false, razorpay_usd: false });
   const empty = await (await worker.fetch(new Request('https://binglesignal.com/api/health'), {})).json();
-  assert.deepEqual(empty.rails, { razorpay: false, razorpay_inr: false, razorpay_usd: false });
+  assert.deepEqual(empty.rails, { razorpay: false, razorpay_inr: false, razorpay_usd: false, paypal: false });
 });
 
 const teaserCluster = (id, q, extra = {}) => ({ story_id: id, source_count: 3, stories: [{

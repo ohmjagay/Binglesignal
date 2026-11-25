@@ -146,7 +146,7 @@ test('Everything you would want to reword comes from config.js: edit it there an
 test('The shipped config.js puts the small print (naming Razorpay), the questions and the dollar-card note on the pricing page', async () => {
   const app = await boot({ rails: { razorpay_inr: true, razorpay_usd: true } });
   assert.match(app.page, /One price worldwide: \$5 a month\./);
-  assert.match(app.page, /Payments are processed by Razorpay\./);
+  assert.match(app.page, /Payments are processed by PayPal and Razorpay\./);
   assert.match(app.page, /href="\/refund"/);
   assert.match(app.page, /href="\/terms"/);
   assert.match(app.page, /Can I cancel any time\?/);

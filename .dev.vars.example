@@ -20,7 +20,15 @@ CLOUDFLARE_ACCOUNT_ID=              # [GitHub]
 CLOUDFLARE_API_TOKEN=               # [GitHub] token with Workers AI permission
 YOUTUBE_API_KEY=                    # [GitHub] optional: video keyword search
 
-# --- Payments: Razorpay is the ONLY payment rail ---
+# --- Payments: PayPal (first choice, US dollars) and Razorpay (behind "Choose another option") ---
+# PayPal: full steps in docs/PAYPAL_SETUP.md. Leave all four empty to keep PayPal switched off (the page then works exactly as before).
+PAYPAL_CLIENT_ID=                   # developer.paypal.com -> Apps & Credentials -> your Live app
+PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=                  # the ID PayPal shows for the webhook https://binglesignal.com/api/webhooks/paypal
+PAYPAL_PLAN_LITE_MONTHLY=           # P-xxxx  the $5.00 USD monthly plan
+PAYPAL_ENV=                         # empty = live. Write sandbox while testing with PayPal sandbox keys.
+SITE_URL=                           # optional. Empty = https://binglesignal.com (where PayPal sends the customer back to)
+# Razorpay (unchanged):
 # Dashboard -> Account & Settings -> API keys; Subscriptions -> Plans; Settings -> Webhooks
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=

@@ -27,7 +27,7 @@ window.BS={
       'Cut 2-3 hours of daily email reading down to 10-15 minutes, and catch up on the go',
     ],
     // Small print under the price card. {usd} turns into your price ($5). The Refunds and Terms links are added after it automatically.
-    fine:'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by Razorpay.',
+    fine:'One price worldwide: {usd} a month. In India you can pay the same price in rupees at the live exchange rate, and you see the exact total before you pay. If you pay in US dollars your bank may add its own exchange rate and fees. Payments are processed by PayPal and Razorpay.',
     // Shown under the "Pay in US dollars" button that visitors in India see. Leave '' to hide it.
     usdNote:'International card. Your bank may add its own exchange rate and fees, and some Indian cards block dollar payments.',
     // Questions and answers under the price card (like the FAQ on cardboard.ai/pricing). One ['question','answer'] pair per line, no comma after the last one. faq:[] hides the whole block.
@@ -35,7 +35,7 @@ window.BS={
     faq:[
       ['Can I cancel any time?','Yes. Cancel from your Account page and you keep access until the end of the period you have already paid for.'],
       ['Is there a free trial?','Yes. Every new account starts with a 7-day free trial, and no card is needed to start it. If you subscribe while it is still running, the days you have left are added to your plan, so you lose none of them.'], ['When am I charged?','Nothing is charged during your free trial. If you subscribe while it is running, your first payment is taken on the day the trial ends, so you keep every free day, then every month until you cancel. If your trial has already ended, you are charged when you subscribe. If you are not satisfied, email us within 7 days of your first payment for a full refund.'],
-      ['How do I pay?','Outside India you pay {usd} a month by international card. In India you can choose rupees or US dollars.'],
+      ['How do I pay?','The first option is PayPal: {usd} a month in US dollars. Under Choose another option, outside India you pay {usd} a month by international card, and in India you can choose rupees or US dollars.'],
       ['How is the rupee price worked out?','{usd} is converted at the exchange rate on the day you subscribe and rounded up to the next 5 rupees. That rupee amount then stays the same every month.']
     ]
   },

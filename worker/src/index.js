@@ -8,6 +8,7 @@
 //   GET  /api/quote              live $5 -> INR quote (+GST) shown on the checkout step in India
 //   POST /api/checkout           logged-in user subscribes to the single Briefing plan -> Razorpay subscription (INR or USD)
 //   POST /api/webhooks/razorpay  Razorpay tells us a payment happened
+//   POST /api/webhooks/paypal    PayPal tells us a subscription or payment changed (worker/src/paypal.js)
 //   POST /api/webhooks/global    LEGACY: kept only so subscribers who paid through the old global provider keep working
 // Secrets needed: see wrangler.example.toml
 import { handleDeleteEmailData, handleEmailRequest, handleEmailSchedule } from './email-beta.js';
@@ -24,6 +25,7 @@ import { handleHome } from './home.js';
 import { notFound } from './notfound.js';
 import { hostOf } from '../../public/textfmt.js';
 import { handleQuote, getInrQuote, assertInrUnitPlan, gstPercent, QuoteUnavailable, PlanMisconfigured } from './pricing.js';
+import { paypalConfigured, paypalMode, createPaypalSubscription, getPaypalSubscription, cancelPaypalSubscription, verifyPaypalWebhook, paypalSubscriptionId, mapPaypal, PaypalError } from './paypal.js';
 export { EmailAiBudget } from './llm.js';
 export { ApiRateLimits } from './rate-limit.js';
 
@@ -212,6 +214,20 @@ async function handleRazorpay(req, env) {
   await applyPatch(env, m, eventId, 'razorpay', evt.event);
   return json({ ok: true });
 }
+async function handlePaypal(req, env) {
+  const raw = await req.text();
+  if (!(await verifyPaypalWebhook(env, req.headers, raw))) return json({ error: 'bad signature' }, 401);
+  let evt; try { evt = JSON.parse(raw); } catch { return json({ error: 'bad json' }, 400); }
+  const subscriptionId = paypalSubscriptionId(evt);
+  if (!subscriptionId) return json({ ok: true, ignored: evt?.event_type || null });
+  if (!evt.id) return json({ error: 'missing event id' }, 400);
+  // The webhook only says "something changed". What changed is read back from PayPal, so a replayed or out-of-order message can never set a wrong state.
+  const sub = await getPaypalSubscription(env, subscriptionId);
+  const m = mapPaypal(evt, sub);
+  if (!m) return json({ ok: true, ignored: evt.event_type });
+  await applyPatch(env, m, evt.id, 'paypal', m.type || evt.event_type);
+  return json({ ok: true });
+}
 async function handleGlobal(req, env) {
   const raw = await req.text();
   if (!(await verifyStandardWebhook(raw, req.headers, env.GLOBAL_WEBHOOK_SECRET))) return json({ error: 'bad signature' }, 401);
@@ -242,15 +258,18 @@ async function handleCheckout(req, env) {
   const plan = 'lite';
   const interval = 'month';
   if (body.interval && body.interval !== 'month') return json({ error: 'Only monthly billing is available.' }, 400);
-  const currency = body.currency || (req.headers.get('cf-ipcountry') === 'IN' ? 'INR' : 'USD');
+  const wantsPaypal = body.provider === 'paypal';   // PayPal is always US dollars; every other request is Razorpay exactly as before
+  const currency = wantsPaypal ? 'USD' : (body.currency || (req.headers.get('cf-ipcountry') === 'IN' ? 'INR' : 'USD'));
   const gstin = typeof body.gstin === 'string' ? body.gstin.trim().toUpperCase() : '';
   if (!['INR', 'USD'].includes(currency)) return json({ error: 'currency must be INR or USD' }, 400);
   if (gstin && (currency !== 'INR' || !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gstin))) {
     return json({ error: 'Enter a valid 15-character GSTIN for an INR purchase.' }, 400);
   }
   const razorpayPlanId = env[currency === 'USD' ? 'RAZORPAY_PLAN_LITE_MONTHLY_USD' : 'RAZORPAY_PLAN_LITE_MONTHLY'];
-  const provider = 'razorpay'; // Razorpay is the only payment rail for new purchases
-  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET || !razorpayPlanId) {
+  const provider = wantsPaypal ? 'paypal' : 'razorpay';
+  if (wantsPaypal) {
+    if (!paypalConfigured(env)) return json({ error: 'PayPal is not set up yet. Please choose another option.' }, 503);
+  } else if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET || !razorpayPlanId) {
     return json({ error: 'Razorpay plan is not configured for this currency.' }, 503);
   }
 
@@ -292,6 +311,10 @@ async function handleCheckout(req, env) {
   if (!reservationResponse.ok) throw new Error(`Checkout reservation failed: ${reservationResponse.status}`);
   const reservation = await reservationResponse.json();
   if (reservation.state !== 'reserved') {
+    if (reservation.state === 'open' && reservation.checkout_url && (reservation.provider === 'paypal') !== wantsPaypal) {
+      // A checkout with the other payment method is still open (they last 20 minutes). Never create a second one: that could bill them twice.
+      return json({ error: 'You started a payment a moment ago with another payment method. Please finish it, or try again in about 20 minutes.', code: 'other_checkout_open' }, 409);
+    }
     if (reservation.state === 'open' && reservation.checkout_url) {
       return reservation.provider === 'razorpay'
         ? json({ provider: 'razorpay', key_id: env.RAZORPAY_KEY_ID,
@@ -322,6 +345,28 @@ async function handleCheckout(req, env) {
     // the first charge waits until the trial would have ended, so the days left are added to the plan (subscribe on day 3 of 7 and the
     // 4 unused days come on top of the paid month). A trial that has run out, or an account that never had one, is billed at once.
     const startAt = trialEnd - Date.now() > 15 * 60 * 1000 ? Math.floor(trialEnd / 1000) : undefined;
+    if (wantsPaypal) {
+      let created;
+      try {
+        created = await createPaypalSubscription(env, { userId: user.id, email: user.email, startAtMs: startAt ? startAt * 1000 : 0 });
+      } catch (error) {
+        if (!(error instanceof PaypalError)) throw error;
+        // Shows in Cloudflare Logs. Only PayPal's own status and error name: never keys, emails or secrets.
+        console.error('PayPal refused to create the subscription', { status_code: error.status, paypal_error: error.detail, plan_id: env.PAYPAL_PLAN_LITE_MONTHLY });
+        const released = await sb(env, '/rest/v1/rpc/release_payment_checkout', {
+          method: 'POST', body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId }),
+        });
+        if (!released.ok) throw new Error(`PayPal failed and checkout reservation cleanup failed: ${released.status}`);
+        return json({ error: 'PayPal could not start the checkout. Please try again, or choose another option.' }, 502);
+      }
+      externalCheckoutCreated = true;
+      const savedPaypal = await sb(env, '/rest/v1/rpc/finish_payment_checkout', {
+        method: 'POST',
+        body: JSON.stringify({ p_user_id: user.id, p_attempt_id: attemptId, p_provider_subscription_id: created.id, p_checkout_url: created.approveUrl }),
+      });
+      if (!savedPaypal.ok) throw new Error(`PayPal checkout could not be saved: ${savedPaypal.status}`);
+      return json({ provider: 'paypal', subscription_id: created.id, url: created.approveUrl });
+    }
     const r = await fetch('https://api.razorpay.com/v1/subscriptions', { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },
       body: JSON.stringify({ plan_id: razorpayPlanId, total_count: interval === 'year' ? 10 : 120, quantity: quote ? quote.quantity : 1,
@@ -374,6 +419,17 @@ async function handleCancel(req, env) {
   const rows = await (await sb(env, `/rest/v1/subscriptions?user_id=eq.${user.id}&select=provider,provider_subscription_id,status,current_period_end`)).json();
   const s = rows?.[0];
   if (!s || s.status !== 'active' || !s.provider_subscription_id) return json({ error: 'no active subscription to cancel' }, 404);
+  if (s.provider === 'paypal') {
+    // PayPal stops billing at once; the customer keeps access until the end of the period they already paid for (current_period_end is kept).
+    try { await cancelPaypalSubscription(env, s.provider_subscription_id); } catch (error) {
+      if (!(error instanceof PaypalError)) throw error;
+      console.error('PayPal could not cancel the subscription', { status_code: error.status, paypal_error: error.detail });
+      return json({ error: 'PayPal could not cancel this subscription' }, 502);
+    }
+    await sb(env, `/rest/v1/subscriptions?user_id=eq.${user.id}`, { method: 'PATCH', headers: { prefer: 'return=minimal' },
+      body: JSON.stringify({ cancel_at_period_end: true, updated_at: new Date().toISOString() }) });
+    return json({ ok: true, ends_at: s.current_period_end });
+  }
   if (s.provider !== 'razorpay') return json({ ok: true, manual: true });
   const r = await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(s.provider_subscription_id)}/cancel`, { method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(`${env.RAZORPAY_KEY_ID}:${env.RAZORPAY_KEY_SECRET}`) },
@@ -548,7 +604,8 @@ export default {
       if (p === '/api/health') {
         const missing = missingSupabaseConfig(env);
         return json({ ok: true, time: new Date().toISOString(), country: req.headers.get('cf-ipcountry') || null,
-          rails: razorpayRails(env),
+          rails: { ...razorpayRails(env), paypal: paypalConfigured(env) },
+          paypal_mode: paypalMode(env),
           // Launch-day check: razorpay_mode must say "live", and gst_percent must be 0 if you have no GSTIN. Shows no key and no secret.
           razorpay_mode: razorpayMode(env), gst_percent: gstPercent(env),
           // true = this Worker can see the setting. Names only, never values. All three must be true for READ/WATCH to work.
@@ -581,6 +638,7 @@ export default {
         return await handlePlanSwitch(req, env);
       }
       if (p === '/api/webhooks/razorpay') return await handleRazorpay(req, env);
+      if (p === '/api/webhooks/paypal') return await handlePaypal(req, env);
       if (p === '/api/webhooks/global') return await handleGlobal(req, env);
       return await notFound(req, env);
     } catch (e) {

@@ -18,6 +18,7 @@ const USD = Number(BS.price?.usd ?? 5);   // one price worldwide
 const fill = (s) => esc(s).replace(/\{usd\}/g, () => '$' + USD);   // text typed in config.js: {usd} becomes the price, e.g. $5
 const money = (n) => Number(n).toLocaleString('en-IN');
 let ACC = null, ENVI = null, INT = 'month', QUOTE = null, NOTICE = '', busy = false, pendingMfaEnrollment = null;
+let PAYSTEP = null, PAYER = 'Razorpay';   // PAYSTEP 'choose' = PayPal first / "Choose another option"; 'other' = the Razorpay screens below
 const acc = { get now() { return ACC; }, ready: Promise.resolve() };
 window.BSAccess = acc;
 const authed = () => !!window.BSAuth?.has?.();
@@ -96,9 +97,21 @@ function payBox(e) {
   return `<div class="paybox" role="group" aria-label="Choose how to pay"><p class="mu">How would you like to pay?</p>${out.join('')}</div>`;
 }
 
+// PayPal is the first choice. Everything Razorpay does (rupees, dollars, cards, UPI) is behind "Choose another option" and is unchanged.
+function chooseBox(e) {
+  const rails = e.rails || {}, india = region(e) === 'IN';
+  const otherReady = india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd;
+  const out = [];
+  if (NOTICE) out.push(`<p class="err" role="status">${esc(NOTICE)}</p>`);
+  out.push(`<button class="btn fill wide" data-pay-paypal>Pay $${USD.toFixed(2)} a month via PayPal</button><small class="mu">You pay in US dollars. PayPal may add its own currency conversion if your account uses another currency.</small>`);
+  if (otherReady) out.push('<button class="btn wide" data-pay-other>Choose another option</button>');
+  out.push('<button class="btn sm" data-pay-back>Back</button>');
+  return `<div class="paybox" role="group" aria-label="Choose how to pay"><p class="mu">How would you like to pay?</p>${out.join('')}</div>`;
+}
+
 async function pricing() {
   const e = await env(), india = region(e) === 'IN', rails = e.rails || {};
-  const ready = india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd;
+  const ready = !!rails.paypal || (india ? !!(rails.razorpay_inr || rails.razorpay_usd) : !!rails.razorpay_usd);
   const active = ACC?.status === 'active';
   const trialing = ACC?.status === 'trialing', trialSubscribed = trialing && !!ACC.trial_subscribed;
   let cta;
@@ -106,6 +119,7 @@ async function pricing() {
   else if (active) cta = '<button class="btn wide" disabled>Your current plan</button>';
   else if (trialSubscribed) cta = `<button class="btn wide" disabled>Subscribed</button><small class="mu">Your free trial runs until <b>${fd(ACC.trial_ends_at)}</b>. Your first payment of $${USD} is taken then.</small>`;
   else if (!ready) cta = '<button class="btn wide" disabled>Payments opening soon</button><small class="mu">Please check back shortly.</small>';
+  else if (PAYSTEP === 'choose' && rails.paypal) cta = chooseBox(e);
   else if (QUOTE && india) cta = payBox(e);
   else cta = `<button class="btn fill wide" data-plan="lite">Subscribe · $${USD}/month</button>`;
   // Still in the free trial: say what subscribing now does. Nothing is charged until the trial is over, so the days left are added to the plan.
@@ -125,10 +139,19 @@ async function pricing() {
   frame(`<section class="pxh"><h1 class="serif">${esc(PLAN.heading)}</h1><p class="tag">${esc(PLAN.note)}</p>${proofLine}</section><div class="plans">${card}</div><p id="pxmsg" class="err" role="status"></p>${compareCard}${reviewCard}${faqCard}<p class="mu fine">${fill(PLAN.fine)} <a href="/refund">Refunds &amp; cancellation</a> · <a href="/terms">Terms</a></p>`);
 }
 
-// Step 1 of paying. Outside India there is nothing to choose, so go straight to the dollar checkout.
+// Step 1 of paying. With PayPal switched on, everybody first sees "Pay via PayPal" and "Choose another option".
 async function startPay() {
   if (busy) return;
   const e = await env();
+  if (e.rails?.paypal) { PAYSTEP = 'choose'; NOTICE = ''; return pricing(); }
+  return payOtherWay(e);
+}
+
+// The Razorpay path, exactly as it was. Outside India there is nothing to choose, so go straight to the dollar checkout.
+async function payOtherWay(e) {
+  if (busy) return;
+  e = e || await env();
+  PAYSTEP = 'other';
   if (region(e) !== 'IN' || !e.rails?.razorpay_inr) return checkout('USD');
   busy = true; NOTICE = '';
   try {
@@ -138,6 +161,21 @@ async function startPay() {
   } catch { QUOTE = { inr: null }; }
   finally { busy = false; }
   pricing();
+}
+
+// PayPal: the server creates the subscription and gives us PayPal's approval page; we send the customer there.
+async function checkoutPaypal() {
+  if (busy) return; busy = true; let left = false;
+  try {
+    const t = await window.BSAuth.token();
+    const r = await fetch('/api/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body: JSON.stringify({ interval: 'month', currency: 'USD', provider: 'paypal' }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { window.BSAuth.expired(); NOTICE = 'Your session ended. Please sign in again, then press Subscribe once more.'; return; }
+    if (!r.ok) throw new Error(j.error || 'checkout failed');
+    if (j.provider !== 'paypal' || !j.url) throw new Error('PayPal did not return a checkout page');
+    left = true; location.href = j.url;
+  } catch (err) { NOTICE = 'Could not start PayPal: ' + err.message; }
+  finally { if (!left) { busy = false; pricing(); } }
 }
 
 async function checkout(currency) {
@@ -161,12 +199,14 @@ async function checkout(currency) {
 }
 
 const POLL_MS = Number(BS.pollMs) > 0 ? Number(BS.pollMs) : 3000;   // how often we ask "is the plan active yet?"
-async function activating(paymentId) {
-  frame('<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag" id="pxmsg">Confirming your payment with Razorpay. This usually takes a few seconds, so please stay on this page…</p></section>');
+async function activating(paymentId, who) {
+  if (who) PAYER = who;
+  frame(`<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag" id="pxmsg">Confirming your payment with ${PAYER}. This usually takes a few seconds, so please stay on this page…</p></section>`);
   for (let i = 0; i < 60; i++) {   // about three minutes
     await new Promise((r) => setTimeout(r, POLL_MS));
     await loadAccess();
     if (ACC?.status === 'active') { busy = false; return welcome(); }
+    if (PAYER === 'PayPal' && ACC?.trial_subscribed) { busy = false; return subscribedInTrial(); }   // approved during the free trial: the first charge is still to come
   }
   busy = false; stillWaiting(paymentId);
 }
@@ -175,8 +215,12 @@ function welcome() {
   frame('<section class="pxh"><h1 class="serif">You are in. Welcome to BingleSignal.</h1><p class="tag">Your plan is active. Start reading now, or tell us what matters to you first so your briefing is ranked for you from the very first story.</p></section><div class="plans"><article class="card plan hot"><a class="btn fill wide" href="#/me/read">Start my briefing</a><button class="btn wide" data-personalize>Personalize my priorities</button></article></div>');
 }
 
+function subscribedInTrial() {
+  frame(`<section class="pxh"><h1 class="serif">You are subscribed</h1><p class="tag">PayPal has confirmed your subscription. Your free trial runs until <b>${fd(ACC.trial_ends_at)}</b> and your first payment of $${USD} is taken then.</p></section><div class="plans"><article class="card plan hot"><a class="btn fill wide" href="#/me/read">Back to my briefing</a></article></div>`);
+}
+
 function stillWaiting(paymentId) {
-  frame(`<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag">Your bank has confirmed the payment, but switching your plan on is taking longer than usual. You do not need to pay again: your plan unlocks by itself as soon as Razorpay confirms it.${paymentId ? ' Reference: ' + esc(paymentId) + '.' : ''}</p></section><div class="plans"><article class="card"><button class="btn fill wide" data-recheck>Check again</button><a class="btn wide" href="/contact">Contact us</a></article></div>`);
+  frame(`<section class="pxh"><h1 class="serif">Payment received</h1><p class="tag">Your bank has confirmed the payment, but switching your plan on is taking longer than usual. You do not need to pay again: your plan unlocks by itself as soon as ${PAYER} confirms it.${paymentId ? ' Reference: ' + esc(paymentId) + '.' : ''}</p></section><div class="plans"><article class="card"><button class="btn fill wide" data-recheck>Check again</button><a class="btn wide" href="/contact">Contact us</a></article></div>`);
 }
 
 // Public headlines: live from the Worker first, the static file as a backup. Never throws.
@@ -361,8 +405,16 @@ async function cancel() {
 
 function gate() { if (ENFORCE && ACC && !ACC.has_access && /^#\/me/.test(location.hash)) location.hash = '#/paused'; }
 const onPricingPath = () => String(location.pathname || '').replace(/\/+$/, '') === '/pricing';
+const paypalQuery = () => { try { return new URLSearchParams(location.search || '').get('paypal'); } catch { return null; } };
 async function page() {
   const h = location.hash;
+  const pp = paypalQuery();
+  if (pp && onPricingPath() && authed()) {   // the customer is back from PayPal (?paypal=return) or pressed "cancel" there (?paypal=cancel)
+    try { history.replaceState(null, '', '/pricing'); } catch { /* the page still shows */ }
+    if (pp === 'return') return activating(null, 'PayPal');
+    NOTICE = 'PayPal checkout was cancelled. You have not been charged.'; PAYSTEP = 'choose';
+    return pricing();
+  }
   if (/^#\/pricing/.test(h)) { try { history.replaceState(null, '', '/pricing'); } catch { /* the page still shows */ } return pricing(); }
   if (/^#\/paused/.test(h)) return paused();
   if (/^#\/account/.test(h)) return account();
@@ -374,8 +426,11 @@ async function page() {
 const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;
-  if (t.dataset.payCancel !== undefined) { QUOTE = null; NOTICE = ''; pricing(); }
+  const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],[data-pay-paypal],[data-pay-other],[data-pay-back],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;
+  if (t.dataset.payPaypal !== undefined) checkoutPaypal();
+  else if (t.dataset.payOther !== undefined) payOtherWay();
+  else if (t.dataset.payBack !== undefined) { PAYSTEP = null; NOTICE = ''; pricing(); }
+  else if (t.dataset.payCancel !== undefined) { QUOTE = null; NOTICE = ''; PAYSTEP = ENVI?.rails?.paypal ? 'choose' : null; pricing(); }
   else if (t.dataset.pay) checkout(t.dataset.pay);
   else if (t.dataset.plan) startPay();
   else if (t.id === 'delete-email-data') deleteEmailData();
