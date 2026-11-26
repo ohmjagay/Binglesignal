@@ -423,7 +423,13 @@ async function page() {
   $('#px')?.setAttribute('hidden', ''); gate();
 }
 // `ready` must depend ONLY on the access check (pages and the feed wait on it, so it must never wait on a page)
-const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(page); };
+function pageFailed(err) {
+  try { console.error('BingleSignal page error', err); } catch {}
+  const p = $('#px'); if (!p || !onPricingPath()) return;
+  p.hidden = false;
+  p.innerHTML = `<main class="legal"><h1 class="serif">This page could not load</h1><p>${esc(err?.message || String(err))}</p><p><a class="btn fill" href="/pricing">Try again</a></p></main>`;
+}
+const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(() => page()).catch(pageFailed); };
 
 document.addEventListener('click', (e) => {
   const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],[data-pay-paypal],[data-pay-other],[data-pay-back],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;
