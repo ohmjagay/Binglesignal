@@ -68,10 +68,10 @@ window.BS={
  readCap:200,  // stories in READ (same for every subscriber: there is one plan)
  watchCap:200,  // videos in WATCH
  company:'BingleSignal',
- city:'Jaipur, India',   // shown at the bottom of every page next to the company name. Leave '' to hide.
+ city:'',   // shown at the bottom of every page next to the company name. Leave '' to hide.
  operator:'',            // optional: who runs it, for example 'Operated by Your Full Name'. Shown at the bottom of every page. Leave '' to hide.
  site:'https://binglesignal.com',
  // Fill these in later (leave '' to hide). A full link (https://...) or just the handle both work.
  // Example: email:'hello@binglesignal.com', x:'binglesignal', linkedin:'binglesignal', instagram:'binglesignal', youtube:'binglesignal', whatsapp:'https://whatsapp.com/channel/...'
- email:'support@binglesignal.com', x:'', linkedin:'https://www.linkedin.com/company/binglesignal/', instagram:'', youtube:'', whatsapp:''
+ email:'support@binglesignal.com', x:'https://x.com/binglesignal', linkedin:'https://www.linkedin.com/company/binglesignal/', instagram:'', youtube:'', whatsapp:''
 };
