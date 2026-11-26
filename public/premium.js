@@ -429,7 +429,7 @@ function pageFailed(err) {
   p.hidden = false;
   p.innerHTML = `<main class="legal"><h1 class="serif">This page could not load</h1><p>${esc(err?.message || String(err))}</p><p><a class="btn fill" href="/pricing">Try again</a></p></main>`;
 }
-const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(() => page()).catch(pageFailed); };
+const FEATS = [...(PLAN.features || []).filter(Boolean).map((t) => [t, 1]), ...(PLAN.soon || []).filter(Boolean).map((t) => [t, 0])];
 
 document.addEventListener('click', (e) => {
   const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],[data-pay-paypal],[data-pay-other],[data-pay-back],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;
