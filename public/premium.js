@@ -11,7 +11,8 @@ const PLAN = Object.assign({ heading: 'One plan. The whole briefing.', note: 'Fr
   faqHeading: 'Questions', faq: [] }, BS.plan || {});
 const PLAN_NAME = PLAN.name;
 // [text, live?]  live = works today, otherwise shown as "soon" (we never sell what is not built)
-const FEATS = [...(PLAN.features || []).map((t) => [t, 1]), ...(PLAN.soon || []).map((t) => [t, 0])];
+// .filter(Boolean) drops empty slots (for example a stray double comma in config.js), which would otherwise crash the whole pricing page
+const FEATS = [...(PLAN.features || []).filter(Boolean).map((t) => [t, 1]), ...(PLAN.soon || []).filter(Boolean).map((t) => [t, 0])];
 const USD = Number(BS.price?.usd ?? 5);   // one price worldwide
 // Free trial: 7 days for every new account. Subscribing during it keeps the days left: the worker takes the first payment on the day the
 // trial ends, so those days are added to the plan. This file only words it; what is charged is decided in worker/src/index.js.
@@ -423,13 +424,14 @@ async function page() {
   $('#px')?.setAttribute('hidden', ''); gate();
 }
 // `ready` must depend ONLY on the access check (pages and the feed wait on it, so it must never wait on a page)
+// If a page ever fails to draw, say so on the page (with the reason) instead of silently leaving the plain fallback text.
 function pageFailed(err) {
-  try { console.error('BingleSignal page error', err); } catch {}
+  try { console.error('BingleSignal page error', err); } catch { /* no console */ }
   const p = $('#px'); if (!p || !onPricingPath()) return;
   p.hidden = false;
   p.innerHTML = `<main class="legal"><h1 class="serif">This page could not load</h1><p>${esc(err?.message || String(err))}</p><p><a class="btn fill" href="/pricing">Try again</a></p></main>`;
 }
-const FEATS = [...(PLAN.features || []).filter(Boolean).map((t) => [t, 1]), ...(PLAN.soon || []).filter(Boolean).map((t) => [t, 0])];
+const onAuth = () => { const p = loadAccess(); acc.ready = p; p.then(() => page()).catch(pageFailed); };
 
 document.addEventListener('click', (e) => {
   const t = e.target.closest?.('[data-plan],[data-pay],[data-pay-cancel],[data-pay-paypal],[data-pay-other],[data-pay-back],#cx,#delete-email-data,#mfa-start,[data-so],[data-mt],[data-um],[data-personalize],[data-recheck]'); if (!t) return;

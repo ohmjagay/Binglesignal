@@ -257,7 +257,7 @@ function renderRead(){
  sobs?.disconnect();sobs=new IntersectionObserver(es=>{if(es[0].isIntersecting)more()},{rootMargin:'700px'});more();sobs.observe($('#sent'))}
 function more(){const L=list(),box=$('#rl'),s=$('#sent');if(!box||!s)return;const part=L.slice(SHOWN,SHOWN+20);
  if(part.length){box.insertAdjacentHTML('beforeend',part.map(cardR).join(''));SHOWN+=part.length;part.forEach(c=>{const el=box.querySelector(`[data-id="${c.i.id}"]`);if(el)obs.observe(el)})}
- if(SHOWN>=L.length){s.innerHTML=`<div class="end">You've reached the end of today's ${L.length} ranked stories.<br>A fresh ranking arrives every 6 hours. Unlimited scrolling is coming with BingleSignal Plus.</div>`;if(TAB==='read')recordEditionCompletion();sobs.disconnect()}
+ if(SHOWN>=L.length){s.innerHTML=`<div class="end">You've reached the end of today's ${L.length} ranked stories.<br>A fresh ranking arrives several times a day. Unlimited scrolling is coming with BingleSignal Plus.</div>`;if(TAB==='read')recordEditionCompletion();sobs.disconnect()}
  else{s.innerHTML='<div class="end">Loading more…</div>';requestAnimationFrame(()=>{if(s.getBoundingClientRect().top<innerHeight+700)more()})}}
 let completedEditionSlot='';
 async function recordEditionOpened(){
